@@ -1,0 +1,187 @@
+# === DANE I WYNIKI ===
+# Pliki CSV z danymi historycznymi
+*.csv
+
+# Pliki z wynikami backtestingu
+*.pkl
+*.pickle
+
+# Pliki konfiguracyjne użytkownika i wyniki
+*.json
+# WYJĄTEK: Wersjonujemy plik konfiguracyjny w głównym folderze
+!/trading_parameters.json
+
+# Pliki tekstowe z notatkami i wynikami
+*.txt
+# WYJĄTEK: Wersjonujemy dokumentację w głównym folderze
+!/*.txt
+
+# Logi
+*.log
+
+# Pliki Markdown z wynikami (jeśli są generowane)
+# *.md
+# UWAGA: Wersjonujemy pliki .md w głównym folderze (README, dokumentacja)
+
+# Obrazy z wykresami
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+
+# === PYTHON ===
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# === NODE.JS / TAILWIND ===
+# Dependencies
+node_modules/
+jspm_packages/
+
+# Production builds
+/build
+/dist
+
+# Misc
+.npm
+.yarn/
+yarn-error.log
+npm-debug.log*
+yarn-debug.log*
+lerna-debug.log*
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# === macOS ===
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon must end with two \r
+Icon
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# === KATALOGI PROJEKTU ===
+# Katalogi z wynikami (dostosuj nazwy do swojej struktury)
+/analysis_results/
+/backtest_results/
+/logs/
+/data/
+/output/
+/results/
+/archive/
+
+# === IDE ===
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# === INNE ===
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini

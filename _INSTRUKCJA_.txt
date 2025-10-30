@@ -1,0 +1,139 @@
+Instrukcja instalacji i obsługi systemu backtestingu strategii tradingowej
+1. Instalacja Pythona
+
+Wejdź na stronę https://www.python.org/downloads/
+Pobierz najnowszą wersję Python 3.x
+Uruchom instalator
+WAŻNE: zaznacz opcję "Add Python to PATH" podczas instalacji
+Kliknij "Install Now"
+Po zakończeniu instalacji otwórz wiersz poleceń (cmd.exe) i wpisz:
+Copypython --version
+Jeśli zobaczysz numer wersji, instalacja przebiegła pomyślnie.
+
+2. Instalacja wymaganych bibliotek
+
+Otwórz wiersz poleceń (cmd.exe)
+Skopiuj i wklej poniższe komendy, wykonując je po kolei:
+pip install pandas
+pip install numpy
+pip install numba
+pip install ccxt
+pip install scikit-learn
+
+Poczekaj na zakończenie instalacji każdej biblioteki
+
+3. Opis i kolejność uruchamiania skryptów, przykładowy workflow
+Krok 1: Pobranie danych historycznych
+Skrypt: binance_data_fetcher_c.py
+
+Pobiera historyczne dane z Binance
+Dodaje dodatkowe metryki techniczne
+Zapisuje dane do pliku CSV
+
+Uruchomienie:
+python binance_data_fetcher_c.py
+Program zapyta o:
+
+Symbol (wpisz: BTC/USDT)
+Timeframe (wpisz: 1m)
+Datę początkową (format: YYYY-MM-DD)
+Datę końcową (format: YYYY-MM-DD)
+
+Krok 2: Konfiguracja parametrów strategii
+Skrypt: parameter_configurator_c.py
+
+Pozwala skonfigurować parametry strategii
+Zapisuje je do pliku trading_parameters.json
+Archiwizuje poprzednie konfiguracje
+
+Uruchomienie:
+python parameter_configurator_c.py
+Program przeprowadzi przez proces konfiguracji każdego parametru, wyjaśniając jego znaczenie i prosząc o podanie wartości lub zakresu testowania.
+Krok 3: Uruchomienie backtestów
+Skrypt: strategy_runner_c.py
+
+Testuje strategię z różnymi kombinacjami parametrów
+Wykorzystuje wszystkie dostępne rdzenie procesora
+Zapisuje wyniki do plików .pkl
+
+Uruchomienie:
+Copypython strategy_runner_c.py --limit 1000
+Opcje:
+
+--limit [liczba] : maksymalna liczba kombinacji do przetestowania (domyślnie wszystkie)
+--processes [liczba] : liczba wykorzystywanych procesorów (domyślnie wszystkie)
+--continue : kontynuacja przerwanego testu
+
+Krok 4: Analiza wyników
+Skrypt: strategy_analyzer_c.py
+
+Analizuje wyniki wszystkich testów
+Generuje szczegółowy raport
+Sugeruje optymalne wartości parametrów
+
+Uruchomienie:
+Copypython strategy_analyzer_c.py
+4. Przykładowy workflow
+
+Pobierz dane za ostatni miesiąc:
+
+python binance_data_fetcher_c.py
+[BTC/USDT]
+[1m]
+[2024-02-01]
+[2024-02-28]
+
+Skonfiguruj początkowe parametry:
+
+python parameter_configurator_c.py
+Ustaw szerokie zakresy dla pierwszego testu.
+
+Uruchom pierwszy test dla mniejszej liczby kombinacji:
+
+python strategy_runner_c.py --limit 10000
+
+Przeanalizuj wyniki:
+
+python strategy_analyzer_c.py
+
+Na podstawie raportu zmodyfikuj parametry:
+
+python parameter_configurator_c.py
+Zawęź zakresy zgodnie z sugestiami z analizy.
+
+Uruchom kolejny test:
+
+python strategy_runner_c.py
+
+Analizuj wyniki i powtarzaj proces, aż do znalezienia optymalnej konfiguracji.
+
+
+
+Comparator - narzędzie do porównania wyliczonej strategii ze strategią wyegzekwowaną przez bota
+
+Pliki wyjściowe
+
+Raport porównawczy w testowanie/wyniki/comparison_report_[timestamp].txt zawierający:
+Zestawienie każdej rzeczywistej transakcji z sygnałami strategii
+Warunki rynkowe w momencie transakcji
+Statystyki zbiorcze
+
+Log wykonania w logi/comparator_[timestamp].log
+Interpretacja wyników
+
+Dla każdej transakcji raport pokazuje:
+Parametry rzeczywistej transakcji (czas, cena, zysk)
+Warunki rynkowe w momencie wejścia
+Czy strategia wygenerowałaby podobny sygnał
+Przyczyny rozbieżności jeśli występują
+
+
+Statystyki zbiorcze pozwalają porównać:
+Liczbę transakcji (bot vs strategia)
+Całkowity zysk
+Średni zysk na transakcję
+
+Uwagi:
+Skrypt automatycznie archiwizuje przetworzone pliki z transakcjami
+Należy zadbać o dokładną synchronizację czasową danych historycznych i transakcji
+Możliwe są drobne rozbieżności czasowe rzędu 1-2 minut
