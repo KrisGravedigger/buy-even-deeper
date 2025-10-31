@@ -350,6 +350,99 @@ class BinanceDataFetcherBtcFollow:
             }
         
         return info
+    
+    def get_top_pairs_by_volume(
+        self,
+        n: int = 50,
+        quote: str = 'USDC',
+        min_days_listed: int = 60
+    ) -> List[str]:
+        """
+        Pobiera top N par według 24h volume z Binance.
+        
+        Args:
+            n: Liczba par do pobrania
+            quote: Quote currency (USDC)
+            min_days_listed: Minimalna liczba dni od listingu (pomija młode pary)
+        
+        Returns:
+            Lista symboli par, np. ['BTC/USDC', 'ETH/USDC', ...]
+        """
+        try:
+            self.logger.info(f"Rozpoczynam pobieranie top {n} par {quote} według volume...")
+            
+            # Krok 1: Ładowanie rynków
+            self.logger.info("Ładowanie dostępnych rynków...")
+            markets = self.exchange.load_markets()
+            
+            # Krok 2: Filtrowanie par z quote currency
+            usdc_pairs = [
+                symbol for symbol, market in markets.items()
+                if market.get('quote') == quote and market.get('active', True)
+            ]
+            self.logger.info(f"Znaleziono {len(usdc_pairs)} aktywnych par {quote}")
+            
+            # Krok 3: Pobieranie 24h ticker data
+            self.logger.info("Pobieranie danych volume dla wszystkich par...")
+            tickers = self.exchange.fetch_tickers(usdc_pairs)
+            
+            # Krok 4: Sortowanie według volume
+            pairs_with_volume = [
+                (symbol, ticker.get('quoteVolume', 0))
+                for symbol, ticker in tickers.items()
+                if ticker.get('quoteVolume') is not None
+            ]
+            pairs_with_volume.sort(key=lambda x: x[1], reverse=True)
+            
+            self.logger.info(f"Posortowano {len(pairs_with_volume)} par według volume")
+            
+            # Krok 5: Sprawdzanie wieku pary (czy ma wystarczająco danych historycznych)
+            self.logger.info(f"Sprawdzanie dostępności danych historycznych (min. {min_days_listed} dni)...")
+            valid_pairs = []
+            days_ago_timestamp = int((datetime.now() - timedelta(days=min_days_listed)).timestamp() * 1000)
+            
+            for i, (symbol, volume) in enumerate(pairs_with_volume[:n*2], 1):  # Sprawdzamy 2x więcej na wypadek młodych par
+                if len(valid_pairs) >= n:
+                    break
+                    
+                try:
+                    # Próba pobrania jednej świeczki sprzed min_days_listed dni
+                    test_candles = self.exchange.fetch_ohlcv(
+                        symbol=symbol,
+                        timeframe='1d',
+                        since=days_ago_timestamp,
+                        limit=1
+                    )
+                    
+                    if test_candles and len(test_candles) > 0:
+                        valid_pairs.append(symbol)
+                        self.logger.info(
+                            f"[{len(valid_pairs)}/{n}] ✓ {symbol} "
+                            f"(volume: {volume:,.0f} {quote})"
+                        )
+                    else:
+                        self.logger.warning(
+                            f"[{i}] ✗ {symbol} - brak danych sprzed {min_days_listed} dni (pomijam)"
+                        )
+                    
+                    time.sleep(self.exchange.rateLimit / 1000 * 0.5)  # Conservative rate limiting
+                    
+                except Exception as e:
+                    self.logger.warning(f"[{i}] ✗ {symbol} - błąd sprawdzania: {e} (pomijam)")
+                    continue
+            
+            if len(valid_pairs) < n:
+                self.logger.warning(
+                    f"Znaleziono tylko {len(valid_pairs)} par spełniających kryteria "
+                    f"(wymagano {n})"
+                )
+            
+            self.logger.info(f"Zakończono: zwracam {len(valid_pairs)} par")
+            return valid_pairs
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas pobierania top par: {e}")
+            raise
 
 def main():
     """Główna funkcja programu"""
