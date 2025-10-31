@@ -3,7 +3,7 @@
 
 """
 Moduł do pobierania zsynchronizowanych danych historycznych z Binance 
-dla pary głównej oraz BTC/USDT jako referencji.
+dla pary głównej oraz BTC/USDC jako referencji.
 """
 
 import ccxt
@@ -179,8 +179,8 @@ class BinanceDataFetcherBtcFollow:
         main_symbol: str
     ) -> pd.DataFrame:
         """Łączy i przygotowuje dane z obu par"""
-        # Dla BTC/USDT zwracamy tylko przetworzone główne dane
-        if main_symbol == 'BTC/USDT':
+        # Dla BTC/USDC zwracamy tylko przetworzone główne dane
+        if main_symbol == 'BTC/USDC':
             merged_df = self._calculate_additional_metrics(main_df, '')
             merged_df['main_symbol'] = main_symbol
             return merged_df
@@ -228,7 +228,7 @@ class BinanceDataFetcherBtcFollow:
         
         # Dodanie informacji o parach
         merged_df['main_symbol'] = main_symbol
-        merged_df['btc_symbol'] = 'BTC/USDT'
+        merged_df['btc_symbol'] = 'BTC/USDC'
         
         return merged_df
 
@@ -245,17 +245,17 @@ class BinanceDataFetcherBtcFollow:
 
     def fetch_historical_data(
         self,
-        main_symbol: str = 'BTC/USDT',
+        main_symbol: str = 'BTC/USDC',
         timeframe: str = '1m',
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         save_csv: bool = True
     ) -> pd.DataFrame:
         """
-        Pobiera zsynchronizowane dane historyczne dla głównej pary oraz BTC/USDT
+        Pobiera zsynchronizowane dane historyczne dla głównej pary oraz BTC/USDC
         
         Args:
-            main_symbol: Główna para tradingowa (domyślnie BTC/USDT)
+            main_symbol: Główna para tradingowa (domyślnie BTC/USDC)
             timeframe: Interwał czasowy
             start_date: Data początkowa (YYYY-MM-DD)
             end_date: Data końcowa (YYYY-MM-DD)
@@ -276,14 +276,14 @@ class BinanceDataFetcherBtcFollow:
         if not self._validate_data(main_df, main_symbol):
             self.logger.warning(f"Dane dla {main_symbol} mogą być niekompletne lub niepoprawne")
         
-        # Dla BTC/USDT nie pobieramy dodatkowych danych referencyjnych
-        if main_symbol == 'BTC/USDT':
+        # Dla BTC/USDC nie pobieramy dodatkowych danych referencyjnych
+        if main_symbol == 'BTC/USDC':
             merged_df = self._calculate_additional_metrics(main_df, '')
             merged_df['main_symbol'] = main_symbol
         else:
             # Pobieranie danych BTC jako referencji
-            btc_df = self._fetch_single_symbol_data('BTC/USDT', timeframe, start_timestamp, end_timestamp)
-            if not self._validate_data(btc_df, 'BTC/USDT'):
+            btc_df = self._fetch_single_symbol_data('BTC/USDC', timeframe, start_timestamp, end_timestamp)
+            if not self._validate_data(btc_df, 'BTC/USDC'):
                 self.logger.warning("Dane BTC mogą być niekompletne lub niepoprawne")
             
             # Łączenie i przygotowanie danych
@@ -292,10 +292,10 @@ class BinanceDataFetcherBtcFollow:
         if save_csv:
             self._archive_existing_csv(main_symbol, timeframe)
             
-            # Modyfikacja nazwy pliku - dodanie "_with_btc" tylko dla par innych niż BTC/USDT
+            # Modyfikacja nazwy pliku - dodanie "_with_btc" tylko dla par innych niż BTC/USDC
             filename = (f"binance_{main_symbol.replace('/', '_')}_{timeframe}_"
                     f"{start_date}_{end_date}")
-            if main_symbol != 'BTC/USDT':
+            if main_symbol != 'BTC/USDC':
                 filename += "_with_btc"
             filename += ".csv"
             
@@ -333,8 +333,8 @@ class BinanceDataFetcherBtcFollow:
             }
         }
         
-        # Dodaj statystyki BTC tylko jeśli to nie jest para BTC/USDT
-        if symbol != 'BTC/USDT':
+        # Dodaj statystyki BTC tylko jeśli to nie jest para BTC/USDC
+        if symbol != 'BTC/USDC':
             info['btc_pair'] = {
                 'avg_volume': df['btc_volume'].mean(),
                 'avg_volatility': df['btc_volatility'].mean(),
@@ -356,7 +356,7 @@ def main():
     try:
         fetcher = BinanceDataFetcherBtcFollow()
         
-        main_symbol = input("Podaj symbol (np. TON/USDT) [domyślnie: BTC/USDT]: ") or 'BTC/USDT'
+        main_symbol = input("Podaj symbol (np. TON/USDC) [domyślnie: BTC/USDC]: ") or 'BTC/USDC'
         timeframe = input("Podaj timeframe (np. 1m) [domyślnie: 1m]: ") or '1m'
         start_date = input("Podaj datę początkową (YYYY-MM-DD) [domyślnie: 30 dni wstecz]: ")
         end_date = input("Podaj datę końcową (YYYY-MM-DD) [domyślnie: dziś]: ")
@@ -383,9 +383,9 @@ def main():
         print(f"  Max: {info['main_pair']['price_range']['max']:.4f}")
         print(f"  Średnia: {info['main_pair']['price_range']['avg']:.4f}")
         
-        # Wyświetlanie informacji o BTC tylko dla par innych niż BTC/USDT
-        if data['main_symbol'].iloc[0] != 'BTC/USDT':
-            print("\nPara BTC/USDT:")
+        # Wyświetlanie informacji o BTC tylko dla par innych niż BTC/USDC
+        if data['main_symbol'].iloc[0] != 'BTC/USDC':
+            print("\nPara BTC/USDC:")
             print(f"Średni wolumen: {info['btc_pair']['avg_volume']:.2f}")
             print(f"Średnia zmienność: {info['btc_pair']['avg_volatility']:.4f}")
             print("Zakres cen:")
