@@ -444,6 +444,85 @@ class BinanceDataFetcherBtcFollow:
             self.logger.error(f"Błąd podczas pobierania top par: {e}")
             raise
 
+    def fetch_multiple_pairs(
+        self,
+        pairs: List[str],
+        days: int = 60,
+        timeframe: str = '1m',
+        save_csv: bool = True
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        Pobiera dane historyczne dla wielu par jednocześnie (bulk download).
+        
+        Args:
+            pairs: Lista par do pobrania, np. ['BTC/USDC', 'ETH/USDC']
+            days: Liczba dni wstecz
+            timeframe: Interwał czasowy (domyślnie 1m)
+            save_csv: Czy zapisać do CSV
+        
+        Returns:
+            Dict z kluczami: symbol pary, wartościami: DataFrame z danymi
+        """
+        results = {}
+        success_count = 0
+        fail_count = 0
+        
+        # Obliczanie dat
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+        
+        self.logger.info(f"\n{'='*60}")
+        self.logger.info(f"BULK DOWNLOAD: {len(pairs)} par")
+        self.logger.info(f"Okres: {start_date} do {end_date} ({days} dni)")
+        self.logger.info(f"Timeframe: {timeframe}")
+        self.logger.info(f"{'='*60}\n")
+        
+        for i, pair in enumerate(pairs, 1):
+            try:
+                self.logger.info(f"[{i}/{len(pairs)}] Pobieranie {pair}...")
+                
+                # Wywołanie istniejącej funkcji fetch_historical_data
+                df = self.fetch_historical_data(
+                    main_symbol=pair,
+                    timeframe=timeframe,
+                    start_date=start_date,
+                    end_date=end_date,
+                    save_csv=save_csv
+                )
+                
+                if df is not None and len(df) > 0:
+                    results[pair] = df
+                    success_count += 1
+                    self.logger.info(
+                        f"[{i}/{len(pairs)}] ✓ {pair} - {len(df):,} świeczek"
+                    )
+                else:
+                    fail_count += 1
+                    self.logger.warning(
+                        f"[{i}/{len(pairs)}] ✗ {pair} - brak danych"
+                    )
+                
+                # Safety sleep co 10 par
+                if i % 10 == 0:
+                    self.logger.info("Przerwa techniczna (rate limiting safety)...")
+                    time.sleep(5)
+                    
+            except Exception as e:
+                fail_count += 1
+                self.logger.error(
+                    f"[{i}/{len(pairs)}] ✗ {pair} - błąd: {e}"
+                )
+                continue
+        
+        # Podsumowanie
+        self.logger.info(f"\n{'='*60}")
+        self.logger.info(f"PODSUMOWANIE BULK DOWNLOAD:")
+        self.logger.info(f"Sukces: {success_count}/{len(pairs)} par")
+        self.logger.info(f"Niepowodzenia: {fail_count}/{len(pairs)} par")
+        self.logger.info(f"{'='*60}\n")
+        
+        return results
+
 def main():
     """Główna funkcja programu"""
     try:
