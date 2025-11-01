@@ -376,11 +376,20 @@ class BinanceDataFetcherBtcFollow:
             markets = self.exchange.load_markets()
             
             # Krok 2: Filtrowanie par z quote currency (tylko spot)
+            # Lista stablecoinów do wykluczenia z base currency
+            STABLECOINS = [
+                'USDT', 'USDC', 'BUSD', 'TUSD', 'USDP', 'USDD', 'FDUSD', 'DAI', 
+                'FRAX', 'PAX', 'GUSD', 'HUSD', 'EURI', 'EURS', 'AGEUR', 'EUR',
+                'GBP', 'AUD', 'USDE', 'BFUSD'  # Dodatkowe
+            ]
             usdc_pairs = [
                 symbol for symbol, market in markets.items()
                 if market.get('quote') == quote 
                 and market.get('active', True)
                 and market.get('spot', True)  # Tylko spot market
+                and market.get('base', '') not in STABLECOINS 
+                and 'USD' not in market.get('base', '') 
+                and 'EUR' not in market.get('base', '')
             ]
             self.logger.info(f"Znaleziono {len(usdc_pairs)} aktywnych par {quote}")
             
