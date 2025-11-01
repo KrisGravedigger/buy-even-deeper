@@ -700,6 +700,204 @@ def process_fronttest_scenarios(scenario_files, parameter_files, args):
         logger.warning("Nie przetworzono pomyślnie żadnych scenariuszy. Nie zapisano zbiorczego pliku wyników.")
         return {}, None, 0 # Zwracamy puste wyniki i brak pliku
 
+def process_single_csv_file(csv_task):
+    """
+    Przetwarza pojedynczy plik CSV w osobnym procesie (SEKWENCYJNIE dla kombinacji).
+    Jeden rdzeń = jeden plik CSV.
+    
+    Args:
+        csv_task: Tuple (csv_file_path, parameter_files, param_source_info, csv_idx, total_files, args)
+    
+    Returns:
+        Tuple: (csv_file_name, success, result_message)
+    """
+    csv_file_path, parameter_files, param_source_info, csv_idx, total_files, args = csv_task
+    
+    # Ustawienie loggera dla tego procesu
+    process_logger = logging.getLogger(f'CSV_{csv_idx}')
+    
+    try:
+        process_logger.info(f"[{csv_idx}/{total_files}] Rozpoczynam: {csv_file_path.name}")
+        
+        # Wczytanie danych
+        market_data = load_market_data(csv_file_path)
+        if market_data is None:
+            return (csv_file_path.name, False, "Błąd wczytywania danych")
+        
+        session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = Path(args.output_dir) if args.output_dir else WYNIKI_BACKTEST_DIR
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        results_saved = []
+        
+        # Przetwarzanie każdego pliku parametrów
+        for param_file in parameter_files:
+            try:
+                with open(param_file, 'r') as f:
+                    params_config = json.load(f)
+                
+                parameter_combinations = generate_parameter_combinations(
+                    params_config,
+                    market_data=market_data,
+                    max_combinations=args.limit,
+                    mode="backtest",
+                    param_file_name=param_file.name
+                )
+                
+                if not parameter_combinations:
+                    process_logger.warning(f"[{csv_idx}/{total_files}] Brak kombinacji dla {param_file.name}")
+                    continue
+                
+                process_logger.info(f"[{csv_idx}/{total_files}] Testowanie {len(parameter_combinations)} kombinacji dla {param_file.name} (sekwencyjnie na 1 rdzeniu)")
+                
+                # Testy SEKWENCYJNE (bez Pool, bez multiprocessing)
+                results = []
+                stop_flag_value = 0  # Prosta wartość zamiast Manager().Value
+                
+                # Przetwarzanie kombinacji jedna po drugiej
+                for i, params in enumerate(parameter_combinations):
+                    # Wywołanie run_strategy_core bezpośrednio (bez multiprocessing)
+                    try:
+                        trades_profit, trades_executed, positions_closed, trades_checked, btc_blocks = run_strategy_core(
+                            market_data['prices'],
+                            market_data['btc_prices'],
+                            market_data['times'],
+                            params.to_array(),
+                            stop_flag_value
+                        )
+                        
+                        # Obliczenie średniego profitu
+                        avg_profit = np.mean(trades_profit) if len(trades_profit) > 0 else 0.0
+                        
+                        # Konwersja trades na floaty
+                        trades_profit_python_floats = [float(p) for p in trades_profit]
+                        
+                        # Pobranie nazwy pliku parametrów
+                        param_file_name = getattr(params, '__param_file_name', getattr(params, '_TradingParameters__param_file_name', "unknown"))
+                        
+                        # Utworzenie słownika parametrów
+                        from dataclasses import fields
+                        parameters_dict = {field.name: getattr(params, field.name) for field in fields(params)}
+                        
+                        # Dodaj wynik
+                        results.append({
+                            'parameters': parameters_dict,
+                            'trades': trades_profit_python_floats,
+                            'strategy_id': f"csv{csv_idx}_strat{i}",
+                            'worker_id': mp.current_process().pid,
+                            'completed': True,
+                            'total_trades': len(trades_profit_python_floats),
+                            'trades_executed': trades_executed,
+                            'trades_closed': positions_closed,
+                            'trades_checked': trades_checked,
+                            'btc_blocks': btc_blocks,
+                            'avg_profit': float(avg_profit),
+                            'symbol': market_data['symbol'],
+                            'param_file_name': param_file_name
+                        })
+                        
+                    except Exception as e_strat:
+                        process_logger.error(f"[{csv_idx}/{total_files}] Błąd w strategii {i}: {str(e_strat)}")
+                        continue
+                    
+                    # Opcjonalnie: log postępu co 1000 kombinacji
+                    if (i + 1) % 1000 == 0:
+                        process_logger.info(f"[{csv_idx}/{total_files}] Postęp: {i+1}/{len(parameter_combinations)}")
+                
+                if not results:
+                    process_logger.warning(f"[{csv_idx}/{total_files}] Brak wyników dla {param_file.name}")
+                    continue
+                
+                # Zapis
+                param_file_stem = param_file.stem
+                output_prefix = args.output_prefix or f"backtest_{market_data['symbol'].replace('/','-')}"
+                output_file = output_dir / f'{output_prefix}_{param_file_stem}_{session_id}.pkl'
+                
+                with open(output_file, 'wb') as f:
+                    pickle.dump({
+                        'results': results,
+                        'timestamp': datetime.now().isoformat(),
+                        'parameters_file': str(param_file),
+                        'parameters_config': params_config,
+                        'market_data_info': {
+                            'file': str(csv_file_path),
+                            'symbol': market_data['symbol'],
+                            'period': market_data['period'],
+                            'candles': market_data['candles']
+                        },
+                        'mode': 'backtest'
+                    }, f)
+                
+                results_saved.append(output_file.name)
+                process_logger.info(f"[{csv_idx}/{total_files}] Zapisano: {output_file.name} ({len(results)} wyników)")
+                
+            except Exception as e:
+                process_logger.error(f"[{csv_idx}/{total_files}] Błąd w {param_file.name}: {str(e)}")
+                continue
+        
+        if results_saved:
+            return (csv_file_path.name, True, f"Zapisano {len(results_saved)} plików wyników")
+        else:
+            return (csv_file_path.name, False, "Brak wyników do zapisania")
+            
+    except Exception as e:
+        process_logger.error(f"[{csv_idx}/{total_files}] Krytyczny błąd: {str(e)}", exc_info=True)
+        return (csv_file_path.name, False, f"Błąd: {str(e)}")
+    
+def process_single_csv_backtest(csv_file_args):
+    """
+    Funkcja pomocnicza do przetwarzania pojedynczego pliku CSV w trybie backtest.
+    Musi być na poziomie modułu dla kompatybilności z multiprocessing na Windows.
+    
+    Args:
+        csv_file_args: Tuple zawierający (csv_file_path, parameter_files, param_source_info, args_dict, csv_idx, total_files)
+    
+    Returns:
+        Tuple: (csv_file_name, success, result_file_path or error_message)
+    """
+    csv_file_path, parameter_files, param_source_info, args_dict, csv_idx, total_files = csv_file_args
+    
+    # Rekonstrukcja args z dict (bo argparse.Namespace nie jest picklable)
+    import argparse
+    args = argparse.Namespace(**args_dict)
+    
+    # Logger dla tego procesu
+    logger_local = logging.getLogger(f'CSV_{csv_idx}')
+    
+    try:
+        logger_local.info(f"[{csv_idx}/{total_files}] Rozpoczynam przetwarzanie: {csv_file_path.name}")
+        
+        # Wczytanie danych rynkowych
+        market_data = load_market_data(csv_file_path)
+        if market_data is None:
+            error_msg = f"Nie udało się wczytać danych rynkowych z {csv_file_path.name}"
+            logger_local.error(error_msg)
+            return (csv_file_path.name, False, error_msg)
+        
+        # Uruchomienie strategii (używa własnego Pool wewnętrznie)
+        result_file = run_strategy(
+            market_data=market_data,
+            parameter_files=parameter_files,
+            limit=args.limit,
+            processes=args.processes,  # Zostanie automatycznie dostosowane przez run_strategy
+            output_prefix=args.output_prefix,
+            stop_flag=None,  # Nie przekazujemy stop_flag w zagnieżdżonym procesie
+            csv_file_name=csv_file_path.name
+        )
+        
+        if result_file:
+            logger_local.info(f"[{csv_idx}/{total_files}] [OK] Zakończono: {csv_file_path.name} → {result_file}")
+            return (csv_file_path.name, True, result_file)
+        else:
+            error_msg = f"Brak pliku wynikowego dla {csv_file_path.name}"
+            logger_local.warning(error_msg)
+            return (csv_file_path.name, False, error_msg)
+            
+    except Exception as e:
+        error_msg = f"Błąd podczas przetwarzania {csv_file_path.name}: {str(e)}"
+        logger_local.error(error_msg, exc_info=True)
+        return (csv_file_path.name, False, error_msg)
+
 
 def main():
     """Główna funkcja programu"""
@@ -837,63 +1035,138 @@ def main():
                 return
             logger.info(f"Znaleziono {len(parameter_files)} plików parametrów {param_source_info}.")
 
-            # --- Pętla po plikach CSV ---
-            for csv_idx, csv_file_path in enumerate(csv_files_to_process, 1):
-                if len(csv_files_to_process) > 1:
-                    logger.info(f"\n{'='*80}")
-                    logger.info(f"Przetwarzanie pliku CSV {csv_idx}/{len(csv_files_to_process)}: {csv_file_path.name}")
-                    logger.info(f"{'='*80}")
+            # --- Przetwarzanie plików CSV ---
+            if len(csv_files_to_process) > 1:
+                # TRYB RÓWNOLEGŁY - wiele plików CSV
+                logger.info(f"\n{'='*80}")
+                logger.info(f"Rozpoczynam równoległe przetwarzanie {len(csv_files_to_process)} plików CSV")
+                logger.info(f"Każdy plik na dedykowanym rdzeniu (kombinacje w ramach pliku - sekwencyjnie)")
+                logger.info(f"{'='*80}")
                 
-                # --- Wczytanie danych rynkowych ---
+                # Przygotowanie zadań dla Pool'a
+                csv_tasks = []
+                for idx, csv_file in enumerate(csv_files_to_process, 1):
+                    csv_task = (
+                        csv_file,           # csv_file_path
+                        parameter_files,    # parameter_files
+                        param_source_info,  # param_source_info
+                        idx,               # csv_idx
+                        len(csv_files_to_process),  # total_files
+                        args               # args
+                    )
+                    csv_tasks.append(csv_task)
+                
+                # Określenie liczby procesów (max 24, ale nie więcej niż plików)
+                num_processes = min(24, len(csv_files_to_process))
+                logger.info(f"Używam {num_processes} procesów dla {len(csv_files_to_process)} plików")
+                
+                # Uruchomienie Pool'a dla plików CSV
+                try:
+                    with mp.Pool(processes=num_processes) as pool:
+                        # Uruchomienie równoległego przetwarzania z paskiem postępu
+                        results = []
+                        with tqdm(total=len(csv_tasks), desc="Przetwarzanie plików CSV", unit="plik") as pbar:
+                            for result in pool.imap_unordered(process_single_csv_file, csv_tasks):
+                                results.append(result)
+                                csv_name, success, message = result
+                                status = "[OK]" if success else "[FAIL]"
+                                logger.info(f"{status} | {csv_name}: {message}")
+                                pbar.update(1)
+                    
+                    # Podsumowanie
+                    successful = sum(1 for _, success, _ in results if success)
+                    failed = len(results) - successful
+                    logger.info(f"\n{'='*80}")
+                    logger.info(f"PODSUMOWANIE PRZETWARZANIA RÓWNOLEGŁEGO:")
+                    logger.info(f"  Plików przetworzonych pomyślnie: {successful}/{len(csv_files_to_process)}")
+                    if failed > 0:
+                        logger.warning(f"  Plików z błędami: {failed}")
+                    logger.info(f"{'='*80}\n")
+                    
+                except Exception as e_pool:
+                    logger.error(f"Błąd podczas równoległego przetwarzania plików CSV: {str(e_pool)}", exc_info=True)
+                    return
+                
+            else:
+                # TRYB SEKWENCYJNY - jeden plik CSV
+                csv_file_path = csv_files_to_process[0]
+                logger.info(f"\n{'='*80}")
+                logger.info(f"Przetwarzanie pojedynczego pliku CSV: {csv_file_path.name}")
+                logger.info(f"{'='*80}")
+                
+                # Wczytanie danych rynkowych
                 market_data = load_market_data(csv_file_path)
                 if market_data is None:
-                    logger.error(f"Nie udało się wczytać danych rynkowych z {csv_file_path}. Pomijam ten plik.")
-                    continue
+                    logger.error(f"Nie udało się wczytać danych rynkowych z {csv_file_path}.")
+                    return
 
-                # Parametry zostały już wybrane przed pętlą - używamy ich dla tego pliku CSV
-
-                # Log o parametrach został już wyświetlony przed pętlą
-
-                num_processes = args.processes or mp.cpu_count()
                 session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
                 output_dir = Path(args.output_dir) if args.output_dir else WYNIKI_BACKTEST_DIR
                 output_dir.mkdir(parents=True, exist_ok=True)
 
-                # Przetwarzanie każdego pliku parametrów
+                # Przetwarzanie każdego pliku parametrów SEKWENCYJNIE
                 for param_file in parameter_files:
                     try:
                         logger.info(f"\n--- Przetwarzanie pliku parametrów: {param_file.name} ---")
                         with open(param_file, 'r') as f:
                             params_config = json.load(f)
 
-                        # Generowanie kombinacji parametrów
                         parameter_combinations = generate_parameter_combinations(
                             params_config,
                             market_data=market_data,
                             max_combinations=args.limit,
                             mode="backtest",
-                            param_file_name=param_file.name # Przekaż nazwę pliku
+                            param_file_name=param_file.name
                         )
 
                         if not parameter_combinations:
                             logger.warning(f"Brak poprawnych kombinacji parametrów w pliku {param_file.name}")
                             continue
 
-                        logger.info(f"Rozpoczynam testy: {len(parameter_combinations)} kombinacji, {num_processes} procesów")
+                        logger.info(f"Rozpoczynam testy: {len(parameter_combinations)} kombinacji (sekwencyjnie)")
 
-                        # Uruchomienie testów
+                        # Testy SEKWENCYJNE
                         results = []
-                        with mp.Pool(num_processes) as pool:
-                            combinations_list = [(market_data, p, i, len(parameter_combinations), stop_flag)
-                                            for i, p in enumerate(parameter_combinations)]
-
-                            with tqdm(total=len(parameter_combinations), desc=f"Postęp {param_file.stem[:30]}...", leave=False) as pbar:
-                                for result in pool.imap_unordered(run_strategy, combinations_list):
-                                    if result is not None and 'error' not in result:
-                                        results.append(result)
-                                    elif result is not None and 'error' in result:
-                                        logger.warning(f"Strategia {result.get('strategy_id','N/A')} dla {param_file.name} zwróciła błąd: {result['error']}")
-                                    pbar.update(1)
+                        stop_flag_value = 0
+                        
+                        with tqdm(total=len(parameter_combinations), desc=f"Postęp {param_file.stem[:30]}...", leave=False) as pbar:
+                            for i, params in enumerate(parameter_combinations):
+                                try:
+                                    trades_profit, trades_executed, positions_closed, trades_checked, btc_blocks = run_strategy_core(
+                                        market_data['prices'],
+                                        market_data['btc_prices'],
+                                        market_data['times'],
+                                        params.to_array(),
+                                        stop_flag_value
+                                    )
+                                    
+                                    avg_profit = np.mean(trades_profit) if len(trades_profit) > 0 else 0.0
+                                    trades_profit_python_floats = [float(p) for p in trades_profit]
+                                    param_file_name = getattr(params, '__param_file_name', getattr(params, '_TradingParameters__param_file_name', "unknown"))
+                                    
+                                    from dataclasses import fields
+                                    parameters_dict = {field.name: getattr(params, field.name) for field in fields(params)}
+                                    
+                                    results.append({
+                                        'parameters': parameters_dict,
+                                        'trades': trades_profit_python_floats,
+                                        'strategy_id': f"strat{i}",
+                                        'worker_id': 0,
+                                        'completed': True,
+                                        'total_trades': len(trades_profit_python_floats),
+                                        'trades_executed': trades_executed,
+                                        'trades_closed': positions_closed,
+                                        'trades_checked': trades_checked,
+                                        'btc_blocks': btc_blocks,
+                                        'avg_profit': float(avg_profit),
+                                        'symbol': market_data['symbol'],
+                                        'param_file_name': param_file_name
+                                    })
+                                except Exception as e_strat:
+                                    logger.warning(f"Błąd w strategii {i}: {str(e_strat)}")
+                                    continue
+                                
+                                pbar.update(1)
 
                         if not results:
                             logger.warning(f"Brak pomyślnych wyników do zapisania dla pliku {param_file.name}")
@@ -909,9 +1182,9 @@ def main():
                                 'results': results,
                                 'timestamp': datetime.now().isoformat(),
                                 'parameters_file': str(param_file),
-                                'parameters_config': params_config, # Oryginalna konfiguracja z pliku
+                                'parameters_config': params_config,
                                 'market_data_info': {
-                                    'file': str(csv_file_path_str),
+                                    'file': str(csv_file_path),
                                     'symbol': market_data['symbol'],
                                     'period': market_data['period'],
                                     'candles': market_data['candles']
@@ -1111,10 +1384,14 @@ def main():
 
     except KeyboardInterrupt:
         logger.info("\nOtrzymano sygnał przerwania - inicjuję bezpieczne zamknięcie...")
-        stop_flag.value = 1
-        # Daj chwilę procesom potomnym na reakcję
-        import time
-        time.sleep(1)
+        try:
+            if 'stop_flag' in locals():
+                stop_flag.value = 1
+                # Daj chwilę procesom potomnym na reakcję
+                import time
+                time.sleep(1)
+        except:
+            pass  # stop_flag może nie istnieć w niektórych trybach
 
     except Exception as e:
         logger.critical(f"Nieoczekiwany błąd krytyczny na głównym poziomie programu: {str(e)}", exc_info=True)
