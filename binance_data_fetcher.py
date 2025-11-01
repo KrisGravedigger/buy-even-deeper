@@ -39,7 +39,7 @@ class BinanceDataFetcherBtcFollow:
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler(log_file),
+                logging.FileHandler(log_file, encoding='utf-8'),
                 logging.StreamHandler()
             ]
         )
@@ -417,18 +417,18 @@ class BinanceDataFetcherBtcFollow:
                     if test_candles and len(test_candles) > 0:
                         valid_pairs.append(symbol)
                         self.logger.info(
-                            f"[{len(valid_pairs)}/{n}] ✓ {symbol} "
+                            f"[{len(valid_pairs)}/{n}] OK {symbol} "
                             f"(volume: {volume:,.0f} {quote})"
                         )
                     else:
                         self.logger.warning(
-                            f"[{i}] ✗ {symbol} - brak danych sprzed {min_days_listed} dni (pomijam)"
+                            f"[{i}] FAIL {symbol} - brak danych sprzed {min_days_listed} dni (pomijam)"
                         )
                     
                     time.sleep(self.exchange.rateLimit / 1000 * 0.5)  # Conservative rate limiting
                     
                 except Exception as e:
-                    self.logger.warning(f"[{i}] ✗ {symbol} - błąd sprawdzania: {e} (pomijam)")
+                    self.logger.warning(f"[{i}] FAIL {symbol} - błąd sprawdzania: {e} (pomijam)")
                     continue
             
             if len(valid_pairs) < n:
@@ -494,12 +494,12 @@ class BinanceDataFetcherBtcFollow:
                     results[pair] = df
                     success_count += 1
                     self.logger.info(
-                        f"[{i}/{len(pairs)}] ✓ {pair} - {len(df):,} świeczek"
+                        f"[{i}/{len(pairs)}] OK {pair} - {len(df):,} świeczek"
                     )
                 else:
                     fail_count += 1
                     self.logger.warning(
-                        f"[{i}/{len(pairs)}] ✗ {pair} - brak danych"
+                        f"[{i}/{len(pairs)}] FAIL {pair} - brak danych"
                     )
                 
                 # Safety sleep co 10 par
@@ -510,7 +510,7 @@ class BinanceDataFetcherBtcFollow:
             except Exception as e:
                 fail_count += 1
                 self.logger.error(
-                    f"[{i}/{len(pairs)}] ✗ {pair} - błąd: {e}"
+                    f"[{i}/{len(pairs)}] FAIL {pair} - błąd: {e}"
                 )
                 continue
         

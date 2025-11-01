@@ -52,7 +52,7 @@ RECOVERY_TIMEFRAME_MAX = 60  # minuty
 MIN_DAILY_VOLUME_USD = 1000000
 
 # Minimalna wymagana historia
-MIN_HISTORY_DAYS = 60
+MIN_HISTORY_DAYS = 7  # Obniżone dla testów
 
 # Wagi metryk dla overall score
 METRIC_WEIGHTS = {
