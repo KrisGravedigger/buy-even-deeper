@@ -21,7 +21,7 @@ class BinanceDataFetcherBtcFollow:
         self.exchange = ccxt.binance({
             'enableRateLimit': True,
             'options': {
-                'defaultType': 'future',
+                'defaultType': 'spot',
             }
         })
         
@@ -375,16 +375,36 @@ class BinanceDataFetcherBtcFollow:
             self.logger.info("Ładowanie dostępnych rynków...")
             markets = self.exchange.load_markets()
             
-            # Krok 2: Filtrowanie par z quote currency
+            # Krok 2: Filtrowanie par z quote currency (tylko spot)
             usdc_pairs = [
                 symbol for symbol, market in markets.items()
-                if market.get('quote') == quote and market.get('active', True)
+                if market.get('quote') == quote 
+                and market.get('active', True)
+                and market.get('spot', True)  # Tylko spot market
             ]
             self.logger.info(f"Znaleziono {len(usdc_pairs)} aktywnych par {quote}")
             
             # Krok 3: Pobieranie 24h ticker data
             self.logger.info("Pobieranie danych volume dla wszystkich par...")
-            tickers = self.exchange.fetch_tickers(usdc_pairs)
+            try:
+                tickers = self.exchange.fetch_tickers(usdc_pairs)
+            except Exception as e:
+                self.logger.warning(f"Błąd podczas pobierania tickers: {e}")
+                # Fallback: pobieraj po jednym
+                self.logger.info("Próbuję pobrać tickers pojedynczo...")
+                tickers = {}
+                for symbol in usdc_pairs:
+                    try:
+                        ticker = self.exchange.fetch_ticker(symbol)
+                        tickers[symbol] = ticker
+                        time.sleep(self.exchange.rateLimit / 1000 * 0.1)
+                    except Exception as symbol_error:
+                        self.logger.warning(f"Pomijam {symbol}: {symbol_error}")
+                        continue
+                
+                if not tickers:
+                    self.logger.error("Nie udało się pobrać żadnych danych ticker")
+                    raise Exception("Brak danych ticker z Binance API")
             
             # Krok 4: Sortowanie według volume
             pairs_with_volume = [
