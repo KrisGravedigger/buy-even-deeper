@@ -744,162 +744,188 @@ def main():
         if mode == 'backtest':
             logger.info("Uruchamiam tryb Backtest")
 
-            # --- Wybór pliku CSV ---
+            # --- Wybór pliku/plików CSV ---
+            csv_files_to_process = []  # Lista plików do przetworzenia
+            
             csv_file_path_str = args.csv_file
             if not args.non_interactive and not csv_file_path_str:
                  use_default_csv = input(f"\nCzy użyć domyślnego pliku CSV z katalogu '{CSV_DIR}'? (t/n) [t]: ").strip().lower() or 't'
                  if use_default_csv == 'n':
                      custom_csv = input("Podaj ścieżkę do pliku CSV: ").strip()
                      csv_file_path_str = custom_csv if custom_csv and Path(custom_csv).exists() else None
+            
             if not csv_file_path_str:
-                default_csv_dir = CSV_DIR # Use CSV_DIR from strategy_runner.py
-                candidate_files = list(default_csv_dir.glob('*.csv'))
+                default_csv_dir = CSV_DIR
+                candidate_files = sorted(list(default_csv_dir.glob('*.csv')), key=lambda f: f.stat().st_mtime, reverse=True)
 
                 if not candidate_files:
                     logger.error(f"Nie znaleziono żadnych plików CSV w domyślnym katalogu: {default_csv_dir}")
-                    return # Exit if no files found
+                    return
                 elif len(candidate_files) > 1:
-                    # If multiple files, use the newest one as a reasonable default
-                    try:
-                        latest_file = max(candidate_files, key=lambda f: f.stat().st_mtime)
-                        logger.warning(f"Znaleziono wiele plików CSV w {default_csv_dir}. Używam najnowszego: {latest_file.name}")
-                        csv_file_path = latest_file
-                    except Exception as e:
-                        logger.error(f"Błąd podczas wybierania najnowszego pliku CSV w {default_csv_dir}: {e}")
-                        return # Exit on error
+                    # Wiele plików - pytanie o wybór (tylko w trybie interaktywnym)
+                    if not args.non_interactive:
+                        print(f"\nZnaleziono {len(candidate_files)} plików CSV w katalogu {default_csv_dir}:")
+                        for i, f in enumerate(candidate_files[:5], 1):  # Pokaż max 5 najnowszych
+                            print(f"  {i}. {f.name}")
+                        if len(candidate_files) > 5:
+                            print(f"  ... i {len(candidate_files) - 5} więcej")
+                        
+                        process_choice = input("\nCzy przetworzyć:\n  1. Tylko najnowszy plik\n  2. Wszystkie pliki\nWybór (1-2) [1]: ").strip() or "1"
+                        
+                        if process_choice == "2":
+                            csv_files_to_process = candidate_files
+                            logger.info(f"Wybrano przetwarzanie wszystkich {len(csv_files_to_process)} plików CSV")
+                        else:
+                            csv_files_to_process = [candidate_files[0]]
+                            logger.info(f"Wybrano przetwarzanie najnowszego pliku: {candidate_files[0].name}")
+                    else:
+                        # Tryb nieinteraktywny - przetwarzaj wszystkie
+                        csv_files_to_process = candidate_files
+                        logger.info(f"Tryb nieinteraktywny: przetwarzanie wszystkich {len(csv_files_to_process)} plików CSV")
                 else:
-                    # Exactly one file found
-                    csv_file_path = candidate_files[0]
-                    logger.info(f"Używam jedynego pliku CSV z domyślnego katalogu: {csv_file_path.name}")
-
-                csv_file_path_str = str(csv_file_path)
+                    # Dokładnie jeden plik
+                    csv_files_to_process = [candidate_files[0]]
+                    logger.info(f"Używam jedynego pliku CSV z domyślnego katalogu: {candidate_files[0].name}")
             else:
-                 csv_file_path = Path(csv_file_path_str)
-                 if not csv_file_path.exists() or not csv_file_path.is_file():
-                      logger.error(f"Podany plik CSV '{csv_file_path_str}' nie istnieje lub nie jest plikiem.")
-                      return
+                # Podano konkretny plik
+                csv_file_path = Path(csv_file_path_str)
+                if not csv_file_path.exists() or not csv_file_path.is_file():
+                    logger.error(f"Podany plik CSV '{csv_file_path_str}' nie istnieje lub nie jest plikiem.")
+                    return
+                csv_files_to_process = [csv_file_path]
 
-            # --- Wczytanie danych rynkowych ---
-            market_data = load_market_data(Path(csv_file_path_str))
-            if market_data is None:
-                 logger.error(f"Nie udało się wczytać danych rynkowych z {csv_file_path_str}. Przerwanie trybu backtest.")
-                 return
-
-            # --- Wybór plików parametrów ---
+            # --- Wybór plików parametrów (przed pętlą, aby pytać tylko raz) ---
             parameter_files = []
             param_source_info = ""
             if args.param_file: # Jeśli podano konkretny plik parametrów
-                 param_file_path = Path(args.param_file)
-                 if param_file_path.exists() and param_file_path.is_file():
-                      parameter_files = [param_file_path]
-                      param_source_info = f"z pliku: {param_file_path.name}"
-                 else:
-                      logger.error(f"Podany plik parametrów '{args.param_file}' nie istnieje.")
-                      return
+                param_file_path = Path(args.param_file)
+                if param_file_path.exists() and param_file_path.is_file():
+                    parameter_files = [param_file_path]
+                    param_source_info = f"z pliku: {param_file_path.name}"
+                else:
+                    logger.error(f"Podany plik parametrów '{args.param_file}' nie istnieje.")
+                    return
             elif args.param_dir: # Jeśli podano katalog parametrów
-                 param_dir_path = Path(args.param_dir)
-                 if param_dir_path.is_dir():
-                      parameter_files = get_parameter_files(param_dir_path)
-                      param_source_info = f"z katalogu: {param_dir_path}"
-                 else:
-                      logger.error(f"Podany katalog parametrów '{args.param_dir}' nie istnieje.")
-                      return
+                param_dir_path = Path(args.param_dir)
+                if param_dir_path.is_dir():
+                    parameter_files = get_parameter_files(param_dir_path)
+                    param_source_info = f"z katalogu: {param_dir_path}"
+                else:
+                    logger.error(f"Podany katalog parametrów '{args.param_dir}' nie istnieje.")
+                    return
             else: # Domyślne lub interaktywne
-                 if not args.non_interactive:
-                      use_default_params = input(f"\nCzy użyć plików parametrów z domyślnego katalogu '{PARAMETRY_DIR}'? (t/n) [t]: ").strip().lower() or 't'
-                      if use_default_params == 'n':
-                           custom_params_dir = input("Podaj ścieżkę do katalogu z parametrami: ").strip()
-                           if custom_params_dir and Path(custom_params_dir).is_dir():
-                                parameter_files = get_parameter_files(Path(custom_params_dir))
-                                param_source_info = f"z katalogu: {custom_params_dir}"
-                           else:
-                                logger.warning("Podana ścieżka do parametrów jest nieprawidłowa. Używam domyślnego katalogu.")
-                                parameter_files = get_parameter_files(PARAMETRY_DIR)
-                                param_source_info = f"z domyślnego katalogu: {PARAMETRY_DIR}"
-                      else:
-                           parameter_files = get_parameter_files(PARAMETRY_DIR)
-                           param_source_info = f"z domyślnego katalogu: {PARAMETRY_DIR}"
-                 else:
-                      parameter_files = get_parameter_files(PARAMETRY_DIR)
-                      param_source_info = f"z domyślnego katalogu: {PARAMETRY_DIR}"
+                if not args.non_interactive:
+                    use_default_params = input(f"\nCzy użyć plików parametrów z domyślnego katalogu '{PARAMETRY_DIR}'? (t/n) [t]: ").strip().lower() or 't'
+                    if use_default_params == 'n':
+                        custom_params_dir = input("Podaj ścieżkę do katalogu z parametrami: ").strip()
+                        if custom_params_dir and Path(custom_params_dir).is_dir():
+                            parameter_files = get_parameter_files(Path(custom_params_dir))
+                            param_source_info = f"z katalogu: {custom_params_dir}"
+                        else:
+                            logger.warning("Podana ścieżka do parametrów jest nieprawidłowa. Używam domyślnego katalogu.")
+                            parameter_files = get_parameter_files(PARAMETRY_DIR)
+                            param_source_info = f"z domyślnego katalogu: {PARAMETRY_DIR}"
+                    else:
+                        parameter_files = get_parameter_files(PARAMETRY_DIR)
+                        param_source_info = f"z domyślnego katalogu: {PARAMETRY_DIR}"
+                else:
+                    parameter_files = get_parameter_files(PARAMETRY_DIR)
+                    param_source_info = f"z domyślnego katalogu: {PARAMETRY_DIR}"
 
             if not parameter_files:
                 logger.error(f"Nie znaleziono żadnych plików parametrów {param_source_info}.")
                 return
             logger.info(f"Znaleziono {len(parameter_files)} plików parametrów {param_source_info}.")
 
-            num_processes = args.processes or mp.cpu_count()
-            session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_dir = Path(args.output_dir) if args.output_dir else WYNIKI_BACKTEST_DIR
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-            # Przetwarzanie każdego pliku parametrów
-            for param_file in parameter_files:
-                try:
-                    logger.info(f"\n--- Przetwarzanie pliku parametrów: {param_file.name} ---")
-                    with open(param_file, 'r') as f:
-                        params_config = json.load(f)
-
-                    # Generowanie kombinacji parametrów
-                    parameter_combinations = generate_parameter_combinations(
-                        params_config,
-                        market_data=market_data,
-                        max_combinations=args.limit,
-                        mode="backtest",
-                        param_file_name=param_file.name # Przekaż nazwę pliku
-                    )
-
-                    if not parameter_combinations:
-                        logger.warning(f"Brak poprawnych kombinacji parametrów w pliku {param_file.name}")
-                        continue
-
-                    logger.info(f"Rozpoczynam testy: {len(parameter_combinations)} kombinacji, {num_processes} procesów")
-
-                    # Uruchomienie testów
-                    results = []
-                    with mp.Pool(num_processes) as pool:
-                        combinations_list = [(market_data, p, i, len(parameter_combinations), stop_flag)
-                                          for i, p in enumerate(parameter_combinations)]
-
-                        with tqdm(total=len(parameter_combinations), desc=f"Postęp {param_file.stem[:30]}...", leave=False) as pbar:
-                            for result in pool.imap_unordered(run_strategy, combinations_list):
-                                if result is not None and 'error' not in result:
-                                    results.append(result)
-                                elif result is not None and 'error' in result:
-                                    logger.warning(f"Strategia {result.get('strategy_id','N/A')} dla {param_file.name} zwróciła błąd: {result['error']}")
-                                pbar.update(1)
-
-                    if not results:
-                        logger.warning(f"Brak pomyślnych wyników do zapisania dla pliku {param_file.name}")
-                        continue
-
-                    # Zapis wyników
-                    param_file_stem = param_file.stem
-                    output_prefix = args.output_prefix or f"backtest_{market_data['symbol'].replace('/','-')}"
-                    output_file = output_dir / f'{output_prefix}_{param_file_stem}_{session_id}.pkl'
-
-                    with open(output_file, 'wb') as f:
-                        pickle.dump({
-                            'results': results,
-                            'timestamp': datetime.now().isoformat(),
-                            'parameters_file': str(param_file),
-                            'parameters_config': params_config, # Oryginalna konfiguracja z pliku
-                            'market_data_info': {
-                                'file': str(csv_file_path_str),
-                                'symbol': market_data['symbol'],
-                                'period': market_data['period'],
-                                'candles': market_data['candles']
-                            },
-                            'mode': 'backtest'
-                        }, f)
-                    logger.info(f"Zapisano wyniki backtestu do {output_file}")
-
-                except json.JSONDecodeError as e_json:
-                    logger.error(f"Błąd odczytu pliku JSON {param_file.name}: {e_json}")
+            # --- Pętla po plikach CSV ---
+            for csv_idx, csv_file_path in enumerate(csv_files_to_process, 1):
+                if len(csv_files_to_process) > 1:
+                    logger.info(f"\n{'='*80}")
+                    logger.info(f"Przetwarzanie pliku CSV {csv_idx}/{len(csv_files_to_process)}: {csv_file_path.name}")
+                    logger.info(f"{'='*80}")
+                
+                # --- Wczytanie danych rynkowych ---
+                market_data = load_market_data(csv_file_path)
+                if market_data is None:
+                    logger.error(f"Nie udało się wczytać danych rynkowych z {csv_file_path}. Pomijam ten plik.")
                     continue
-                except Exception as e:
-                    logger.error(f"Nieoczekiwany błąd podczas przetwarzania pliku {param_file.name}: {str(e)}", exc_info=True)
-                    continue
+
+                # Parametry zostały już wybrane przed pętlą - używamy ich dla tego pliku CSV
+
+                # Log o parametrach został już wyświetlony przed pętlą
+
+                num_processes = args.processes or mp.cpu_count()
+                session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_dir = Path(args.output_dir) if args.output_dir else WYNIKI_BACKTEST_DIR
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                # Przetwarzanie każdego pliku parametrów
+                for param_file in parameter_files:
+                    try:
+                        logger.info(f"\n--- Przetwarzanie pliku parametrów: {param_file.name} ---")
+                        with open(param_file, 'r') as f:
+                            params_config = json.load(f)
+
+                        # Generowanie kombinacji parametrów
+                        parameter_combinations = generate_parameter_combinations(
+                            params_config,
+                            market_data=market_data,
+                            max_combinations=args.limit,
+                            mode="backtest",
+                            param_file_name=param_file.name # Przekaż nazwę pliku
+                        )
+
+                        if not parameter_combinations:
+                            logger.warning(f"Brak poprawnych kombinacji parametrów w pliku {param_file.name}")
+                            continue
+
+                        logger.info(f"Rozpoczynam testy: {len(parameter_combinations)} kombinacji, {num_processes} procesów")
+
+                        # Uruchomienie testów
+                        results = []
+                        with mp.Pool(num_processes) as pool:
+                            combinations_list = [(market_data, p, i, len(parameter_combinations), stop_flag)
+                                            for i, p in enumerate(parameter_combinations)]
+
+                            with tqdm(total=len(parameter_combinations), desc=f"Postęp {param_file.stem[:30]}...", leave=False) as pbar:
+                                for result in pool.imap_unordered(run_strategy, combinations_list):
+                                    if result is not None and 'error' not in result:
+                                        results.append(result)
+                                    elif result is not None and 'error' in result:
+                                        logger.warning(f"Strategia {result.get('strategy_id','N/A')} dla {param_file.name} zwróciła błąd: {result['error']}")
+                                    pbar.update(1)
+
+                        if not results:
+                            logger.warning(f"Brak pomyślnych wyników do zapisania dla pliku {param_file.name}")
+                            continue
+
+                        # Zapis wyników
+                        param_file_stem = param_file.stem
+                        output_prefix = args.output_prefix or f"backtest_{market_data['symbol'].replace('/','-')}"
+                        output_file = output_dir / f'{output_prefix}_{param_file_stem}_{session_id}.pkl'
+
+                        with open(output_file, 'wb') as f:
+                            pickle.dump({
+                                'results': results,
+                                'timestamp': datetime.now().isoformat(),
+                                'parameters_file': str(param_file),
+                                'parameters_config': params_config, # Oryginalna konfiguracja z pliku
+                                'market_data_info': {
+                                    'file': str(csv_file_path_str),
+                                    'symbol': market_data['symbol'],
+                                    'period': market_data['period'],
+                                    'candles': market_data['candles']
+                                },
+                                'mode': 'backtest'
+                            }, f)
+                        logger.info(f"Zapisano wyniki backtestu do {output_file}")
+
+                    except json.JSONDecodeError as e_json:
+                        logger.error(f"Błąd odczytu pliku JSON {param_file.name}: {e_json}")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Nieoczekiwany błąd podczas przetwarzania pliku {param_file.name}: {str(e)}", exc_info=True)
+                        continue
 
         elif mode == 'fronttest':
             logger.info("Uruchamiam tryb Fronttest")
