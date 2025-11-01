@@ -35,7 +35,7 @@ QUARTERLY_WEIGHTS = {
 }
 
 # Próg dip detection
-DIP_THRESHOLD = -1.5  # % spadku od high
+DIP_THRESHOLD = -2.5  # % spadku od high
 
 # Okno wykrywania dipu
 DIP_DETECTION_WINDOW_MIN = 15  # minuty
