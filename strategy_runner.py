@@ -794,6 +794,49 @@ def main():
                     return
                 csv_files_to_process = [csv_file_path]
 
+            # --- Wybór plików parametrów (przed pętlą, aby pytać tylko raz) ---
+            parameter_files = []
+            param_source_info = ""
+            if args.param_file: # Jeśli podano konkretny plik parametrów
+                param_file_path = Path(args.param_file)
+                if param_file_path.exists() and param_file_path.is_file():
+                    parameter_files = [param_file_path]
+                    param_source_info = f"z pliku: {param_file_path.name}"
+                else:
+                    logger.error(f"Podany plik parametrów '{args.param_file}' nie istnieje.")
+                    return
+            elif args.param_dir: # Jeśli podano katalog parametrów
+                param_dir_path = Path(args.param_dir)
+                if param_dir_path.is_dir():
+                    parameter_files = get_parameter_files(param_dir_path)
+                    param_source_info = f"z katalogu: {param_dir_path}"
+                else:
+                    logger.error(f"Podany katalog parametrów '{args.param_dir}' nie istnieje.")
+                    return
+            else: # Domyślne lub interaktywne
+                if not args.non_interactive:
+                    use_default_params = input(f"\nCzy użyć plików parametrów z domyślnego katalogu '{PARAMETRY_DIR}'? (t/n) [t]: ").strip().lower() or 't'
+                    if use_default_params == 'n':
+                        custom_params_dir = input("Podaj ścieżkę do katalogu z parametrami: ").strip()
+                        if custom_params_dir and Path(custom_params_dir).is_dir():
+                            parameter_files = get_parameter_files(Path(custom_params_dir))
+                            param_source_info = f"z katalogu: {custom_params_dir}"
+                        else:
+                            logger.warning("Podana ścieżka do parametrów jest nieprawidłowa. Używam domyślnego katalogu.")
+                            parameter_files = get_parameter_files(PARAMETRY_DIR)
+                            param_source_info = f"z domyślnego katalogu: {PARAMETRY_DIR}"
+                    else:
+                        parameter_files = get_parameter_files(PARAMETRY_DIR)
+                        param_source_info = f"z domyślnego katalogu: {PARAMETRY_DIR}"
+                else:
+                    parameter_files = get_parameter_files(PARAMETRY_DIR)
+                    param_source_info = f"z domyślnego katalogu: {PARAMETRY_DIR}"
+
+            if not parameter_files:
+                logger.error(f"Nie znaleziono żadnych plików parametrów {param_source_info}.")
+                return
+            logger.info(f"Znaleziono {len(parameter_files)} plików parametrów {param_source_info}.")
+
             # --- Pętla po plikach CSV ---
             for csv_idx, csv_file_path in enumerate(csv_files_to_process, 1):
                 if len(csv_files_to_process) > 1:
@@ -807,48 +850,9 @@ def main():
                     logger.error(f"Nie udało się wczytać danych rynkowych z {csv_file_path}. Pomijam ten plik.")
                     continue
 
-                # --- Wybór plików parametrów ---
-                parameter_files = []
-                param_source_info = ""
-                if args.param_file: # Jeśli podano konkretny plik parametrów
-                    param_file_path = Path(args.param_file)
-                    if param_file_path.exists() and param_file_path.is_file():
-                        parameter_files = [param_file_path]
-                        param_source_info = f"z pliku: {param_file_path.name}"
-                    else:
-                        logger.error(f"Podany plik parametrów '{args.param_file}' nie istnieje.")
-                        return
-                elif args.param_dir: # Jeśli podano katalog parametrów
-                    param_dir_path = Path(args.param_dir)
-                    if param_dir_path.is_dir():
-                        parameter_files = get_parameter_files(param_dir_path)
-                        param_source_info = f"z katalogu: {param_dir_path}"
-                    else:
-                        logger.error(f"Podany katalog parametrów '{args.param_dir}' nie istnieje.")
-                        return
-                else: # Domyślne lub interaktywne
-                    if not args.non_interactive:
-                        use_default_params = input(f"\nCzy użyć plików parametrów z domyślnego katalogu '{PARAMETRY_DIR}'? (t/n) [t]: ").strip().lower() or 't'
-                        if use_default_params == 'n':
-                            custom_params_dir = input("Podaj ścieżkę do katalogu z parametrami: ").strip()
-                            if custom_params_dir and Path(custom_params_dir).is_dir():
-                                    parameter_files = get_parameter_files(Path(custom_params_dir))
-                                    param_source_info = f"z katalogu: {custom_params_dir}"
-                            else:
-                                    logger.warning("Podana ścieżka do parametrów jest nieprawidłowa. Używam domyślnego katalogu.")
-                                    parameter_files = get_parameter_files(PARAMETRY_DIR)
-                                    param_source_info = f"z domyślnego katalogu: {PARAMETRY_DIR}"
-                        else:
-                            parameter_files = get_parameter_files(PARAMETRY_DIR)
-                            param_source_info = f"z domyślnego katalogu: {PARAMETRY_DIR}"
-                    else:
-                        parameter_files = get_parameter_files(PARAMETRY_DIR)
-                        param_source_info = f"z domyślnego katalogu: {PARAMETRY_DIR}"
+                # Parametry zostały już wybrane przed pętlą - używamy ich dla tego pliku CSV
 
-                if not parameter_files:
-                    logger.error(f"Nie znaleziono żadnych plików parametrów {param_source_info}.")
-                    return
-                logger.info(f"Znaleziono {len(parameter_files)} plików parametrów {param_source_info}.")
+                # Log o parametrach został już wyświetlony przed pętlą
 
                 num_processes = args.processes or mp.cpu_count()
                 session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
