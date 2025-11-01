@@ -3,7 +3,7 @@
 
 """
 Moduł do pobierania zsynchronizowanych danych historycznych z Binance 
-dla pary głównej oraz BTC/USDT jako referencji.
+dla pary głównej oraz BTC/USDC jako referencji.
 """
 
 import ccxt
@@ -21,7 +21,7 @@ class BinanceDataFetcherBtcFollow:
         self.exchange = ccxt.binance({
             'enableRateLimit': True,
             'options': {
-                'defaultType': 'future',
+                'defaultType': 'spot',
             }
         })
         
@@ -39,7 +39,7 @@ class BinanceDataFetcherBtcFollow:
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler(log_file),
+                logging.FileHandler(log_file, encoding='utf-8'),
                 logging.StreamHandler()
             ]
         )
@@ -179,8 +179,8 @@ class BinanceDataFetcherBtcFollow:
         main_symbol: str
     ) -> pd.DataFrame:
         """Łączy i przygotowuje dane z obu par"""
-        # Dla BTC/USDT zwracamy tylko przetworzone główne dane
-        if main_symbol == 'BTC/USDT':
+        # Dla BTC/USDC zwracamy tylko przetworzone główne dane
+        if main_symbol == 'BTC/USDC':
             merged_df = self._calculate_additional_metrics(main_df, '')
             merged_df['main_symbol'] = main_symbol
             return merged_df
@@ -228,7 +228,7 @@ class BinanceDataFetcherBtcFollow:
         
         # Dodanie informacji o parach
         merged_df['main_symbol'] = main_symbol
-        merged_df['btc_symbol'] = 'BTC/USDT'
+        merged_df['btc_symbol'] = 'BTC/USDC'
         
         return merged_df
 
@@ -245,17 +245,17 @@ class BinanceDataFetcherBtcFollow:
 
     def fetch_historical_data(
         self,
-        main_symbol: str = 'BTC/USDT',
+        main_symbol: str = 'BTC/USDC',
         timeframe: str = '1m',
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         save_csv: bool = True
     ) -> pd.DataFrame:
         """
-        Pobiera zsynchronizowane dane historyczne dla głównej pary oraz BTC/USDT
+        Pobiera zsynchronizowane dane historyczne dla głównej pary oraz BTC/USDC
         
         Args:
-            main_symbol: Główna para tradingowa (domyślnie BTC/USDT)
+            main_symbol: Główna para tradingowa (domyślnie BTC/USDC)
             timeframe: Interwał czasowy
             start_date: Data początkowa (YYYY-MM-DD)
             end_date: Data końcowa (YYYY-MM-DD)
@@ -276,14 +276,14 @@ class BinanceDataFetcherBtcFollow:
         if not self._validate_data(main_df, main_symbol):
             self.logger.warning(f"Dane dla {main_symbol} mogą być niekompletne lub niepoprawne")
         
-        # Dla BTC/USDT nie pobieramy dodatkowych danych referencyjnych
-        if main_symbol == 'BTC/USDT':
+        # Dla BTC/USDC nie pobieramy dodatkowych danych referencyjnych
+        if main_symbol == 'BTC/USDC':
             merged_df = self._calculate_additional_metrics(main_df, '')
             merged_df['main_symbol'] = main_symbol
         else:
             # Pobieranie danych BTC jako referencji
-            btc_df = self._fetch_single_symbol_data('BTC/USDT', timeframe, start_timestamp, end_timestamp)
-            if not self._validate_data(btc_df, 'BTC/USDT'):
+            btc_df = self._fetch_single_symbol_data('BTC/USDC', timeframe, start_timestamp, end_timestamp)
+            if not self._validate_data(btc_df, 'BTC/USDC'):
                 self.logger.warning("Dane BTC mogą być niekompletne lub niepoprawne")
             
             # Łączenie i przygotowanie danych
@@ -292,10 +292,10 @@ class BinanceDataFetcherBtcFollow:
         if save_csv:
             self._archive_existing_csv(main_symbol, timeframe)
             
-            # Modyfikacja nazwy pliku - dodanie "_with_btc" tylko dla par innych niż BTC/USDT
+            # Modyfikacja nazwy pliku - dodanie "_with_btc" tylko dla par innych niż BTC/USDC
             filename = (f"binance_{main_symbol.replace('/', '_')}_{timeframe}_"
                     f"{start_date}_{end_date}")
-            if main_symbol != 'BTC/USDT':
+            if main_symbol != 'BTC/USDC':
                 filename += "_with_btc"
             filename += ".csv"
             
@@ -333,8 +333,8 @@ class BinanceDataFetcherBtcFollow:
             }
         }
         
-        # Dodaj statystyki BTC tylko jeśli to nie jest para BTC/USDT
-        if symbol != 'BTC/USDT':
+        # Dodaj statystyki BTC tylko jeśli to nie jest para BTC/USDC
+        if symbol != 'BTC/USDC':
             info['btc_pair'] = {
                 'avg_volume': df['btc_volume'].mean(),
                 'avg_volatility': df['btc_volatility'].mean(),
@@ -350,13 +350,214 @@ class BinanceDataFetcherBtcFollow:
             }
         
         return info
+    
+    def get_top_pairs_by_volume(
+        self,
+        n: int = 50,
+        quote: str = 'USDC',
+        min_days_listed: int = 60
+    ) -> List[str]:
+        """
+        Pobiera top N par według 24h volume z Binance.
+        
+        Args:
+            n: Liczba par do pobrania
+            quote: Quote currency (USDC)
+            min_days_listed: Minimalna liczba dni od listingu (pomija młode pary)
+        
+        Returns:
+            Lista symboli par, np. ['BTC/USDC', 'ETH/USDC', ...]
+        """
+        try:
+            self.logger.info(f"Rozpoczynam pobieranie top {n} par {quote} według volume...")
+            
+            # Krok 1: Ładowanie rynków
+            self.logger.info("Ładowanie dostępnych rynków...")
+            markets = self.exchange.load_markets()
+            
+            # Krok 2: Filtrowanie par z quote currency (tylko spot)
+            # Lista stablecoinów do wykluczenia z base currency
+            STABLECOINS = [
+                'USDT', 'USDC', 'BUSD', 'TUSD', 'USDP', 'USDD', 'FDUSD', 'DAI', 
+                'FRAX', 'PAX', 'GUSD', 'HUSD', 'EURI', 'EURS', 'AGEUR', 'EUR',
+                'GBP', 'AUD', 'USDE', 'BFUSD'  # Dodatkowe
+            ]
+            usdc_pairs = [
+                symbol for symbol, market in markets.items()
+                if market.get('quote') == quote 
+                and market.get('active', True)
+                and market.get('spot', True)  # Tylko spot market
+                and market.get('base', '') not in STABLECOINS 
+                and 'USD' not in market.get('base', '') 
+                and 'EUR' not in market.get('base', '')
+            ]
+            self.logger.info(f"Znaleziono {len(usdc_pairs)} aktywnych par {quote}")
+            
+            # Krok 3: Pobieranie 24h ticker data
+            self.logger.info("Pobieranie danych volume dla wszystkich par...")
+            try:
+                tickers = self.exchange.fetch_tickers(usdc_pairs)
+            except Exception as e:
+                self.logger.warning(f"Błąd podczas pobierania tickers: {e}")
+                # Fallback: pobieraj po jednym
+                self.logger.info("Próbuję pobrać tickers pojedynczo...")
+                tickers = {}
+                for symbol in usdc_pairs:
+                    try:
+                        ticker = self.exchange.fetch_ticker(symbol)
+                        tickers[symbol] = ticker
+                        time.sleep(self.exchange.rateLimit / 1000 * 0.1)
+                    except Exception as symbol_error:
+                        self.logger.warning(f"Pomijam {symbol}: {symbol_error}")
+                        continue
+                
+                if not tickers:
+                    self.logger.error("Nie udało się pobrać żadnych danych ticker")
+                    raise Exception("Brak danych ticker z Binance API")
+            
+            # Krok 4: Sortowanie według volume
+            pairs_with_volume = [
+                (symbol, ticker.get('quoteVolume', 0))
+                for symbol, ticker in tickers.items()
+                if ticker.get('quoteVolume') is not None
+            ]
+            pairs_with_volume.sort(key=lambda x: x[1], reverse=True)
+            
+            self.logger.info(f"Posortowano {len(pairs_with_volume)} par według volume")
+            
+            # Krok 5: Sprawdzanie wieku pary (czy ma wystarczająco danych historycznych)
+            self.logger.info(f"Sprawdzanie dostępności danych historycznych (min. {min_days_listed} dni)...")
+            valid_pairs = []
+            days_ago_timestamp = int((datetime.now() - timedelta(days=min_days_listed)).timestamp() * 1000)
+            
+            for i, (symbol, volume) in enumerate(pairs_with_volume[:n*2], 1):  # Sprawdzamy 2x więcej na wypadek młodych par
+                if len(valid_pairs) >= n:
+                    break
+                    
+                try:
+                    # Próba pobrania jednej świeczki sprzed min_days_listed dni
+                    test_candles = self.exchange.fetch_ohlcv(
+                        symbol=symbol,
+                        timeframe='1d',
+                        since=days_ago_timestamp,
+                        limit=1
+                    )
+                    
+                    if test_candles and len(test_candles) > 0:
+                        valid_pairs.append(symbol)
+                        self.logger.info(
+                            f"[{len(valid_pairs)}/{n}] OK {symbol} "
+                            f"(volume: {volume:,.0f} {quote})"
+                        )
+                    else:
+                        self.logger.warning(
+                            f"[{i}] FAIL {symbol} - brak danych sprzed {min_days_listed} dni (pomijam)"
+                        )
+                    
+                    time.sleep(self.exchange.rateLimit / 1000 * 0.5)  # Conservative rate limiting
+                    
+                except Exception as e:
+                    self.logger.warning(f"[{i}] FAIL {symbol} - błąd sprawdzania: {e} (pomijam)")
+                    continue
+            
+            if len(valid_pairs) < n:
+                self.logger.warning(
+                    f"Znaleziono tylko {len(valid_pairs)} par spełniających kryteria "
+                    f"(wymagano {n})"
+                )
+            
+            self.logger.info(f"Zakończono: zwracam {len(valid_pairs)} par")
+            return valid_pairs
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas pobierania top par: {e}")
+            raise
+
+    def fetch_multiple_pairs(
+        self,
+        pairs: List[str],
+        days: int = 60,
+        timeframe: str = '1m',
+        save_csv: bool = True
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        Pobiera dane historyczne dla wielu par jednocześnie (bulk download).
+        
+        Args:
+            pairs: Lista par do pobrania, np. ['BTC/USDC', 'ETH/USDC']
+            days: Liczba dni wstecz
+            timeframe: Interwał czasowy (domyślnie 1m)
+            save_csv: Czy zapisać do CSV
+        
+        Returns:
+            Dict z kluczami: symbol pary, wartościami: DataFrame z danymi
+        """
+        results = {}
+        success_count = 0
+        fail_count = 0
+        
+        # Obliczanie dat
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+        
+        self.logger.info(f"\n{'='*60}")
+        self.logger.info(f"BULK DOWNLOAD: {len(pairs)} par")
+        self.logger.info(f"Okres: {start_date} do {end_date} ({days} dni)")
+        self.logger.info(f"Timeframe: {timeframe}")
+        self.logger.info(f"{'='*60}\n")
+        
+        for i, pair in enumerate(pairs, 1):
+            try:
+                self.logger.info(f"[{i}/{len(pairs)}] Pobieranie {pair}...")
+                
+                # Wywołanie istniejącej funkcji fetch_historical_data
+                df = self.fetch_historical_data(
+                    main_symbol=pair,
+                    timeframe=timeframe,
+                    start_date=start_date,
+                    end_date=end_date,
+                    save_csv=save_csv
+                )
+                
+                if df is not None and len(df) > 0:
+                    results[pair] = df
+                    success_count += 1
+                    self.logger.info(
+                        f"[{i}/{len(pairs)}] OK {pair} - {len(df):,} świeczek"
+                    )
+                else:
+                    fail_count += 1
+                    self.logger.warning(
+                        f"[{i}/{len(pairs)}] FAIL {pair} - brak danych"
+                    )
+                
+                # Safety sleep co 10 par
+                if i % 10 == 0:
+                    self.logger.info("Przerwa techniczna (rate limiting safety)...")
+                    time.sleep(5)
+                    
+            except Exception as e:
+                fail_count += 1
+                self.logger.error(
+                    f"[{i}/{len(pairs)}] FAIL {pair} - błąd: {e}"
+                )
+                continue
+        
+        # Podsumowanie
+        self.logger.info(f"\n{'='*60}")
+        self.logger.info(f"PODSUMOWANIE BULK DOWNLOAD:")
+        self.logger.info(f"Sukces: {success_count}/{len(pairs)} par")
+        self.logger.info(f"Niepowodzenia: {fail_count}/{len(pairs)} par")
+        self.logger.info(f"{'='*60}\n")
+        
+        return results
 
 def main():
     """Główna funkcja programu"""
     try:
         fetcher = BinanceDataFetcherBtcFollow()
         
-        main_symbol = input("Podaj symbol (np. TON/USDT) [domyślnie: BTC/USDT]: ") or 'BTC/USDT'
+        main_symbol = input("Podaj symbol (np. TON/USDC) [domyślnie: BTC/USDC]: ") or 'BTC/USDC'
         timeframe = input("Podaj timeframe (np. 1m) [domyślnie: 1m]: ") or '1m'
         start_date = input("Podaj datę początkową (YYYY-MM-DD) [domyślnie: 30 dni wstecz]: ")
         end_date = input("Podaj datę końcową (YYYY-MM-DD) [domyślnie: dziś]: ")
@@ -383,9 +584,9 @@ def main():
         print(f"  Max: {info['main_pair']['price_range']['max']:.4f}")
         print(f"  Średnia: {info['main_pair']['price_range']['avg']:.4f}")
         
-        # Wyświetlanie informacji o BTC tylko dla par innych niż BTC/USDT
-        if data['main_symbol'].iloc[0] != 'BTC/USDT':
-            print("\nPara BTC/USDT:")
+        # Wyświetlanie informacji o BTC tylko dla par innych niż BTC/USDC
+        if data['main_symbol'].iloc[0] != 'BTC/USDC':
+            print("\nPara BTC/USDC:")
             print(f"Średni wolumen: {info['btc_pair']['avg_volume']:.2f}")
             print(f"Średnia zmienność: {info['btc_pair']['avg_volatility']:.4f}")
             print("Zakres cen:")
