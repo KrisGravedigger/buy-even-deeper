@@ -10,6 +10,10 @@
 *.json
 # WYJĄTEK: Wersjonujemy plik konfiguracyjny w głównym folderze
 !/trading_parameters.json
+!/parametry/btc_ui_winner.json
+!/artifacts/**
+!/artifacts/**/*.csv
+!/artifacts/**/*.json
 
 # Pliki tekstowe z notatkami i wynikami
 *.txt

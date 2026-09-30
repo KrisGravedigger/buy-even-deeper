@@ -89,6 +89,16 @@ def get_latest_scenario_directory():
     logger.info(f"Wybrano najnowszy katalog scenariuszy: {latest_dir}")
     return latest_dir
 
+def _normalize_pair(symbol: str) -> str:
+    """BTC/USDT, BTC_USDC, BTC-USDT → BTCUSDT."""
+    return symbol.replace('/', '').replace('-', '').replace('_', '').upper()
+
+def is_btc_quoted_pair(symbol: str) -> bool:
+    """Para, w której bazą jest BTC (referencja BTC = ta sama seria cen)."""
+    normalized = _normalize_pair(symbol)
+    quotes = ('USDT', 'USDC', 'BUSD', 'FDUSD', 'USD')
+    return normalized.startswith('BTC') and any(normalized[3:] == quote for quote in quotes)
+
 @njit(cache=True, fastmath=True)
 def precompute_price_changes(prices: np.ndarray, timeframe: int) -> np.ndarray:
     """Prekompiluje zmiany cen"""
@@ -106,26 +116,25 @@ def run_strategy_core(
     times: np.ndarray,
     params: np.ndarray,
     stop_flag: int
-) -> Tuple[List[float], int, int, int, int]: # Zmieniamy typ zwracany List[float] na bardziej ogólny, bo Numba zwraca swój typ listy
-#) -> Tuple[nb.typed.List, int, int, int, int]: # Można też tak, ale Tuple[List[float], ...] jest czytelniejsze dla Pythona
+) -> Tuple[List[float], int, int, int, int, int]:
     """Główna logika strategii zoptymalizowana pod numba"""
 
     # Sprawdzenie czy dane wejściowe nie są puste
     if len(main_prices) == 0 or len(btc_prices) == 0 or len(times) == 0:
         # Zwracamy PUSTĄ LISTĘ Z TYPEM float64
-        return nb.typed.List.empty_list(nb.float64), 0, 0, 0, 0 # <--- ZMIANA
+        return nb.typed.List.empty_list(nb.float64), 0, 0, 0, 0, 0
 
     # Sprawdzenie, czy długości tablic są zgodne
     if not (len(main_prices) == len(btc_prices) == len(times)):
         # Zwracamy PUSTĄ LISTĘ Z TYPEM float64
-        return nb.typed.List.empty_list(nb.float64), 0, 0, 0, 0 # <--- ZMIANA
+        return nb.typed.List.empty_list(nb.float64), 0, 0, 0, 0, 0
 
     # Prekompilacja zmian cen
     timeframe = int(params[0])
     # Dodatkowe zabezpieczenie przed nieprawidłowym timeframe
     if timeframe <= 0 or timeframe >= len(main_prices):
          # Zwracamy PUSTĄ LISTĘ Z TYPEM float64
-        return nb.typed.List.empty_list(nb.float64), 0, 0, 0, 0 # <--- ZMIANA
+        return nb.typed.List.empty_list(nb.float64), 0, 0, 0, 0, 0
 
     main_changes = precompute_price_changes(main_prices, timeframe)
     btc_changes = precompute_price_changes(btc_prices, timeframe)
@@ -141,6 +150,7 @@ def run_strategy_core(
     # Blokady czasowe [global_block, btc_block, coin_block, last_buy]
     blocking_times = np.zeros(4, dtype=np.int64)
     stop_loss_price = 0.0
+    pump_block_until = np.int64(0)
 
     # Statystyki
     trades_checked = 0
@@ -287,9 +297,16 @@ def run_strategy_core(
                  if current_price > required_price:
                      continue # Cena nie jest wystarczająco niska dla kolejnego zakupu
 
-        # Pump Detection (pump_detection_enabled)
+        # Pump Detection (pump_detection_enabled).
+        # Sam warunek na bieżącej świecy nie blokuje dipu (dip i pump się wykluczają),
+        # więc po sygnale pump ustawiamy blokadę na pump_detection_disabled_time minut.
         if params[14] > 0 and main_changes[i] >= params[15]: # pump_change_threshold
             trailing_buy_active = False  # Reset trailing buy przy pump detection
+            pump_block_until = current_time + np.int64(params[26])
+            continue
+
+        if current_time < pump_block_until:
+            trailing_buy_active = False
             continue
 
         # Główny warunek wejścia (spadek ceny) - buy_change_threshold
@@ -346,8 +363,11 @@ def run_strategy_core(
             blocking_times[3] = current_time # Zapisz czas ostatniego zakupu
             trades_executed += 1
 
-    # Zamknij pozostałe pozycje na końcu symulacji (tutaj już trades_profit ma poprawny typ)
+    # Zamknij pozostałe pozycje na końcu symulacji (mark-to-market, nie jest to fill z reguły).
+    # Ostatnie open_mtm elementy trades_profit to te domknięcia.
+    open_mtm = 0
     if position_count > 0 and stop_flag == 0:
+        open_mtm = position_count
         last_price = main_prices[-1]
         for j in range(position_count):
             if positions[j, 0] > 0: # Upewnij się, że pozycja jest aktywna
@@ -355,8 +375,10 @@ def run_strategy_core(
                 profit_pct = np.float64(((last_price - positions[j, 0]) / positions[j, 0]) * 100.0)
                 trades_profit.append(profit_pct)
                 positions_closed += 1
+            else:
+                open_mtm -= 1
 
-    return trades_profit, trades_executed, positions_closed, trades_checked, btc_blocks
+    return trades_profit, trades_executed, positions_closed, trades_checked, btc_blocks, open_mtm
 
 
 def run_strategy(args):
@@ -367,7 +389,7 @@ def run_strategy(args):
 
     try:
         # Wywołanie rdzenia strategii
-        trades_profit, trades_executed, positions_closed, trades_checked, btc_blocks = run_strategy_core(
+        trades_profit, trades_executed, positions_closed, trades_checked, btc_blocks, open_mtm = run_strategy_core(
             market_data['prices'],
             market_data['btc_prices'],
             market_data['times'],
@@ -409,6 +431,7 @@ def run_strategy(args):
             'trades_closed': positions_closed,
             'trades_checked': trades_checked,
             'btc_blocks': btc_blocks,
+            'open_mtm': int(open_mtm),
             'avg_profit': float(avg_profit), # Upewnijmy się, że to float
             'symbol': market_data['symbol'],
             'param_file_name': param_file_name
@@ -439,6 +462,7 @@ def run_strategy(args):
             'trades_closed': 0,
             'trades_checked': 0,
             'btc_blocks': 0,
+            'open_mtm': 0,
             'avg_profit': 0.0,
             'symbol': market_data.get('symbol', 'ERROR_SYMBOL'),
             'param_file_name': error_param_file
@@ -488,13 +512,13 @@ def load_market_data(csv_path: Path) -> Optional[Dict[str, np.ndarray]]:
         else:
             # Awaryjne wykrywanie z nazwy pliku (prosta heurystyka)
             filename_parts = csv_path.stem.split('_')
-            if len(filename_parts) > 2 and "USDT" in filename_parts[1].upper():
+            if len(filename_parts) > 2 and filename_parts[1].upper() in {"USDT", "USDC", "BUSD", "FDUSD"}:
                  main_symbol = f"{filename_parts[0].upper()}/{filename_parts[1].upper()}" # Np. BTC/USDT
                  logger.warning(f"Brak kolumny 'main_symbol' w pliku {csv_path.name}. Wykryto {main_symbol} z nazwy pliku.")
-            elif "BTC" in csv_path.stem.upper() and "USDT" in csv_path.stem.upper():
-                 main_symbol = "BTC/USDT" # Ostateczny fallback dla BTC
-                 # Zmieniono poziom logowania
-                 logger.info(f"Brak kolumny 'main_symbol'. Wydedukowano {main_symbol} z nazwy pliku {csv_path.name}.") # Zmieniono też treść na bardziej pozytywną
+            elif "BTC" in csv_path.stem.upper() and any(q in csv_path.stem.upper() for q in ("USDT", "USDC")):
+                 quote = "USDC" if "USDC" in csv_path.stem.upper() and "USDT" not in csv_path.stem.upper() else "USDT"
+                 main_symbol = f"BTC/{quote}"
+                 logger.info(f"Brak kolumny 'main_symbol'. Wydedukowano {main_symbol} z nazwy pliku {csv_path.name}.")
 
         # --- Przygotowanie cen ---
         prices_np = df['average_price'].to_numpy(dtype=np.float32)
@@ -503,10 +527,10 @@ def load_market_data(csv_path: Path) -> Optional[Dict[str, np.ndarray]]:
         # Normalizacja symbolu do porównania (np. BTC/USDT -> BTCUSDT)
         normalized_symbol = main_symbol.replace('/', '').upper()
 
-        if normalized_symbol == 'BTCUSDT':
-            # Dla BTC/USDT, ceny BTC są takie same jak ceny główne
+        if is_btc_quoted_pair(main_symbol) or is_btc_quoted_pair(normalized_symbol):
+            # Dla BTC/USDT i BTC/USDC ceny BTC są takie same jak ceny główne.
             btc_prices_np = prices_np
-            logger.debug(f"Plik {csv_path.name}: Wykryto parę BTC/USDT. Używam 'average_price' jako ceny BTC.")
+            logger.debug(f"Plik {csv_path.name}: Wykryto parę {main_symbol}. Używam 'average_price' jako ceny BTC.")
         else:
             # Dla innych par, szukamy dedykowanej kolumny btc_average_price
             if 'btc_average_price' in df.columns:
@@ -606,7 +630,8 @@ def process_fronttest_scenarios(scenario_files, parameter_files, args):
                     market_data=market_data, # Przekazujemy wczytane dane
                     max_combinations=args.limit,
                     mode="fronttest",
-                    param_file_name=param_file.name
+                    param_file_name=param_file.name,
+                    exact_grid=getattr(args, 'exact_grid', False),
                 )
 
                 if not parameter_combinations:
@@ -741,7 +766,8 @@ def process_single_csv_file(csv_task):
                     market_data=market_data,
                     max_combinations=args.limit,
                     mode="backtest",
-                    param_file_name=param_file.name
+                    param_file_name=param_file.name,
+                    exact_grid=getattr(args, 'exact_grid', False),
                 )
                 
                 if not parameter_combinations:
@@ -758,7 +784,7 @@ def process_single_csv_file(csv_task):
                 for i, params in enumerate(parameter_combinations):
                     # Wywołanie run_strategy_core bezpośrednio (bez multiprocessing)
                     try:
-                        trades_profit, trades_executed, positions_closed, trades_checked, btc_blocks = run_strategy_core(
+                        trades_profit, trades_executed, positions_closed, trades_checked, btc_blocks, open_mtm = run_strategy_core(
                             market_data['prices'],
                             market_data['btc_prices'],
                             market_data['times'],
@@ -791,6 +817,7 @@ def process_single_csv_file(csv_task):
                             'trades_closed': positions_closed,
                             'trades_checked': trades_checked,
                             'btc_blocks': btc_blocks,
+                            'open_mtm': int(open_mtm),
                             'avg_profit': float(avg_profit),
                             'symbol': market_data['symbol'],
                             'param_file_name': param_file_name
@@ -918,8 +945,13 @@ def main():
         parser.add_argument('--param-file', type=str, default=None, help='Pojedynczy plik JSON z parametrami (głównie dla visualization, opcjonalnie dla backtest)')
         parser.add_argument('--param-dir', type=str, default=None, help='Katalog z plikami parametrów JSON (dla backtest/fronttest)')
         parser.add_argument('--output-dir', type=str, default=None, help='Katalog wyjściowy dla wyników')
+        parser.add_argument('--exact-grid', action='store_true',
+                            help='Pełna siatka min/max/step bez Latin Hypercube Sampling')
 
         args = parser.parse_args()
+        if not args.non_interactive and not sys.stdin.isatty():
+            args.non_interactive = True
+            logger.info("stdin nie jest TTY — włączam tryb nieinteraktywny z domyślnymi ścieżkami.")
 
         # Tryb działania
         mode = args.mode
@@ -1116,7 +1148,8 @@ def main():
                             market_data=market_data,
                             max_combinations=args.limit,
                             mode="backtest",
-                            param_file_name=param_file.name
+                            param_file_name=param_file.name,
+                            exact_grid=getattr(args, 'exact_grid', False),
                         )
 
                         if not parameter_combinations:
@@ -1132,7 +1165,7 @@ def main():
                         with tqdm(total=len(parameter_combinations), desc=f"Postęp {param_file.stem[:30]}...", leave=False) as pbar:
                             for i, params in enumerate(parameter_combinations):
                                 try:
-                                    trades_profit, trades_executed, positions_closed, trades_checked, btc_blocks = run_strategy_core(
+                                    trades_profit, trades_executed, positions_closed, trades_checked, btc_blocks, open_mtm = run_strategy_core(
                                         market_data['prices'],
                                         market_data['btc_prices'],
                                         market_data['times'],
@@ -1158,6 +1191,7 @@ def main():
                                         'trades_closed': positions_closed,
                                         'trades_checked': trades_checked,
                                         'btc_blocks': btc_blocks,
+                                        'open_mtm': int(open_mtm),
                                         'avg_profit': float(avg_profit),
                                         'symbol': market_data['symbol'],
                                         'param_file_name': param_file_name

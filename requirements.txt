@@ -1,0 +1,6 @@
+pandas>=2.0
+numpy>=1.24
+numba>=0.59
+ccxt>=4.0
+scikit-learn>=1.3
+tqdm>=4.66

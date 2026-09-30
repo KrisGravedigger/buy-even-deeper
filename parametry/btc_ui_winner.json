@@ -1,0 +1,20 @@
+{
+  "check_timeframe": {"type": "numeric", "numeric_type": "int", "value": 30},
+  "percentage_buy_threshold": {"type": "numeric", "numeric_type": "float", "value": -2.0},
+  "sell_profit_target": {"type": "numeric", "numeric_type": "float", "value": 1.0},
+  "trailing_enabled": {"type": "boolean", "value": false},
+  "stop_loss_enabled": {"type": "boolean", "value": true},
+  "stop_loss_threshold": {"type": "numeric", "numeric_type": "float", "value": -3.0},
+  "stop_loss_delay_time": {"type": "numeric", "numeric_type": "int", "value": 0},
+  "max_open_orders": {"type": "numeric", "numeric_type": "int", "value": 1},
+  "max_open_orders_per_coin": {"type": "numeric", "numeric_type": "int", "value": 1},
+  "next_buy_delay": {"type": "numeric", "numeric_type": "int", "value": 1},
+  "next_buy_price_lower": {"type": "numeric", "numeric_type": "float", "value": 0.0},
+  "pump_detection_enabled": {"type": "boolean", "value": true},
+  "pump_detection_threshold": {"type": "numeric", "numeric_type": "float", "value": 5.0},
+  "pump_detection_disabled_time": {"type": "numeric", "numeric_type": "int", "value": 30},
+  "follow_btc_price": {"type": "boolean", "value": false},
+  "trailing_buy_enabled": {"type": "boolean", "value": false},
+  "stop_loss_disable_buy": {"type": "boolean", "value": false},
+  "stop_loss_disable_buy_all": {"type": "boolean", "value": false}
+}
