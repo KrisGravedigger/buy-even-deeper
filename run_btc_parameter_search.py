@@ -374,6 +374,11 @@ def main() -> None:
 
     prices = market["prices"].astype(np.float64)
     times = market["times"].astype(np.int64)
+    span_min = int(times[-1] - times[0])
+    if span_min < int(len(times) * 0.9):
+        raise SystemExit(
+            f"Zegar świec jest zepsuty: zakres {span_min} min przy {len(times)} świecach 1m."
+        )
     cases = build_grid()
     print(f"Siatka: {len(cases)} konfiguracji, świece: {len(prices)}")
 

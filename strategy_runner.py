@@ -493,12 +493,14 @@ def load_market_data(csv_path: Path) -> Optional[Dict[str, np.ndarray]]:
             return None
 
         # --- Konwersja czasu ---
+        # Minuty od epoch, niezależnie od rozdzielczości datetime (ns w starszym
+        # pandas, us w pandas 3). Dzielenie int64 // 60e9 zakładało nanosekundy
+        # i na us ściskało zegar ~1000×, więc next_buy_delay i trailing_stop_time
+        # liczyły się w tysiącach minut.
         try:
-            # Próba konwersji ze świadomością strefy czasowej, jeśli istnieje
-            df['minutes'] = pd.to_datetime(df['timestamp'], utc=True).astype(np.int64) // 60e9
-        except TypeError:
-             # Fallback dla timestampów bez informacji o strefie czasowej
-             df['minutes'] = pd.to_datetime(df['timestamp']).astype(np.int64) // 60e9
+            ts = pd.to_datetime(df['timestamp'], utc=True)
+            epoch = pd.Timestamp('1970-01-01', tz='UTC')
+            df['minutes'] = ((ts - epoch) // pd.Timedelta(minutes=1)).astype(np.int64)
         except Exception as e_time:
             logger.error(f"Błąd konwersji kolumny 'timestamp' na minuty w pliku {csv_path.name}: {e_time}")
             return None

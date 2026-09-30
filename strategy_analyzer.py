@@ -805,7 +805,10 @@ def main():
                          logger.info("Zakończono analizę rekomendacji.")
                      else: logger.warning("Nie załadowano żadnych danych dystrybucji parametrów.")
              else: logger.info("Pominięto analizę rekomendacji.")
-        else: logger.info("Brak pomyślnie przetworzonych plików, pomijam analizę rekomendacji.")
+        elif args.no_recommendations:
+            logger.info("Pominięto analizę rekomendacji (--no-recommendations).")
+        else:
+            logger.info("Brak pomyślnie przetworzonych plików, pomijam analizę rekomendacji.")
 
     except KeyboardInterrupt:
         logger.warning("\nPrzerwano działanie skryptu przez użytkownika (Ctrl+C).")

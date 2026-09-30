@@ -59,7 +59,7 @@ Raport interpretacji: `REPORT.md`.
 
 | BtD (UI) | Pole lokalne | Uwagi |
 | --- | --- | --- |
-| Check Timeframe | `check_timeframe` | Liczba świec 1m, czyli minuty przy danych 1m |
+| Check Timeframe | `check_timeframe` | Liczba świec 1m, czyli minuty przy danych 1m. Zegar świecy to minuty od epoch; przy pandas 3 (datetime w mikrosekundach) nie wolno dzielić `int64 // 60e9` |
 | Percentage Buy Threshold | `percentage_buy_threshold` | Ujemny próg zmiany `(high+low)/2` |
 | Sell Enabled | `sell_profit_target` | Działa, gdy `trailing_enabled` jest wyłączone |
 | Trailing Stop price / margin / time | `trailing_stop_price`, `trailing_stop_margin`, `trailing_stop_time` | Wyklucza się ze zwykłym sell |
