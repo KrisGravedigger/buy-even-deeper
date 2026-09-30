@@ -14,16 +14,52 @@ import numpy as np
 from typing import Optional, Tuple, Dict, List
 import logging
 from pathlib import Path
+import urllib.error
+import urllib.request
+
+def _is_btc_base(symbol: str) -> bool:
+    """BTC/USDT i BTC/USDC nie potrzebują osobnej serii referencyjnej."""
+    return symbol.split('/')[0].upper() == 'BTC'
+
+
+def _binance_spot_is_geo_blocked() -> bool:
+    """api.binance.com zwraca 451 z części adresów. Publiczne klines są na lustrze."""
+    try:
+        with urllib.request.urlopen('https://api.binance.com/api/v3/ping', timeout=10) as resp:
+            return resp.status == 451
+    except urllib.error.HTTPError as exc:
+        return exc.code == 451
+    except Exception:
+        return False
+
+
+def _point_spot_urls_at(exchange: ccxt.binance, host: str) -> None:
+    for key in ('public', 'private', 'v1'):
+        current = exchange.urls['api'].get(key)
+        if isinstance(current, str) and '://' in current:
+            scheme, rest = current.split('://', 1)
+            path = rest.split('/', 1)[1] if '/' in rest else ''
+            exchange.urls['api'][key] = f'{scheme}://{host}/{path}'
+
 
 class BinanceDataFetcherBtcFollow:
     def __init__(self):
         """Inicjalizacja fetchera danych z Binance"""
+        # Tylko spot. Domyślne fetchMarkets w ccxt pyta też o fapi/dapi,
+        # a te hosty dostają 451 z części lokalizacji niezależnie od lustra spot.
         self.exchange = ccxt.binance({
             'enableRateLimit': True,
             'options': {
                 'defaultType': 'spot',
+                'fetchMarkets': ['spot'],
             }
         })
+        if _binance_spot_is_geo_blocked():
+            mirror = 'data-api.binance.vision'
+            _point_spot_urls_at(self.exchange, mirror)
+            self._public_host = mirror
+        else:
+            self._public_host = 'api.binance.com'
         
         # Tworzenie katalogów
         self.csv_dir = Path('csv')
@@ -44,6 +80,7 @@ class BinanceDataFetcherBtcFollow:
             ]
         )
         self.logger = logging.getLogger(__name__)
+        self.logger.info("Publiczny host OHLCV: %s", self._public_host)
 
     def _convert_dates_to_timestamps(
         self,
@@ -179,8 +216,8 @@ class BinanceDataFetcherBtcFollow:
         main_symbol: str
     ) -> pd.DataFrame:
         """Łączy i przygotowuje dane z obu par"""
-        # Dla BTC/USDC zwracamy tylko przetworzone główne dane
-        if main_symbol == 'BTC/USDC':
+        # Dla par BTC/* zwracamy tylko przetworzone główne dane
+        if _is_btc_base(main_symbol):
             merged_df = self._calculate_additional_metrics(main_df, '')
             merged_df['main_symbol'] = main_symbol
             return merged_df
@@ -276,8 +313,8 @@ class BinanceDataFetcherBtcFollow:
         if not self._validate_data(main_df, main_symbol):
             self.logger.warning(f"Dane dla {main_symbol} mogą być niekompletne lub niepoprawne")
         
-        # Dla BTC/USDC nie pobieramy dodatkowych danych referencyjnych
-        if main_symbol == 'BTC/USDC':
+        # Dla par BTC/* nie pobieramy dodatkowych danych referencyjnych
+        if _is_btc_base(main_symbol):
             merged_df = self._calculate_additional_metrics(main_df, '')
             merged_df['main_symbol'] = main_symbol
         else:
@@ -295,7 +332,7 @@ class BinanceDataFetcherBtcFollow:
             # Modyfikacja nazwy pliku - dodanie "_with_btc" tylko dla par innych niż BTC/USDC
             filename = (f"binance_{main_symbol.replace('/', '_')}_{timeframe}_"
                     f"{start_date}_{end_date}")
-            if main_symbol != 'BTC/USDC':
+            if not _is_btc_base(main_symbol):
                 filename += "_with_btc"
             filename += ".csv"
             
@@ -333,8 +370,8 @@ class BinanceDataFetcherBtcFollow:
             }
         }
         
-        # Dodaj statystyki BTC tylko jeśli to nie jest para BTC/USDC
-        if symbol != 'BTC/USDC':
+        # Dodaj statystyki BTC tylko dla altów (para BTC nie ma osobnej serii)
+        if not _is_btc_base(symbol):
             info['btc_pair'] = {
                 'avg_volume': df['btc_volume'].mean(),
                 'avg_volatility': df['btc_volatility'].mean(),
@@ -554,13 +591,43 @@ class BinanceDataFetcherBtcFollow:
 
 def main():
     """Główna funkcja programu"""
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description='Publiczne OHLCV z Binance (ccxt, bez kluczy API).'
+    )
+    parser.add_argument('--symbol', default=None, help='Para, np. BTC/USDT lub BTC/USDC')
+    parser.add_argument('--timeframe', default=None, help='Interwał, np. 1m')
+    parser.add_argument('--start', default=None, help='Data początkowa YYYY-MM-DD')
+    parser.add_argument('--end', default=None, help='Data końcowa YYYY-MM-DD (północ, exclusive)')
+    parser.add_argument(
+        '--non-interactive',
+        action='store_true',
+        help='Bez pytań. Domyślnie BTC/USDT, 1m, ostatnie 30 dni do teraz.',
+    )
+    args = parser.parse_args()
+
     try:
         fetcher = BinanceDataFetcherBtcFollow()
-        
-        main_symbol = input("Podaj symbol (np. TON/USDC) [domyślnie: BTC/USDC]: ") or 'BTC/USDC'
-        timeframe = input("Podaj timeframe (np. 1m) [domyślnie: 1m]: ") or '1m'
-        start_date = input("Podaj datę początkową (YYYY-MM-DD) [domyślnie: 30 dni wstecz]: ")
-        end_date = input("Podaj datę końcową (YYYY-MM-DD) [domyślnie: dziś]: ")
+
+        headless = args.non_interactive or not sys.stdin.isatty() or any(
+            v is not None for v in (args.symbol, args.timeframe, args.start, args.end)
+        )
+        if headless:
+            main_symbol = args.symbol or 'BTC/USDT'
+            timeframe = args.timeframe or '1m'
+            start_date = args.start or ''
+            end_date = args.end or ''
+            fetcher.logger.info(
+                "Tryb headless: symbol=%s timeframe=%s start=%s end=%s",
+                main_symbol, timeframe, start_date or '(domyślny)', end_date or '(domyślny)',
+            )
+        else:
+            main_symbol = input("Podaj symbol (np. TON/USDC) [domyślnie: BTC/USDC]: ") or 'BTC/USDC'
+            timeframe = input("Podaj timeframe (np. 1m) [domyślnie: 1m]: ") or '1m'
+            start_date = input("Podaj datę początkową (YYYY-MM-DD) [domyślnie: 30 dni wstecz]: ")
+            end_date = input("Podaj datę końcową (YYYY-MM-DD) [domyślnie: dziś]: ")
         
         data = fetcher.fetch_historical_data(
             main_symbol=main_symbol,
@@ -568,6 +635,8 @@ def main():
             start_date=start_date,
             end_date=end_date
         )
+        if data is None or len(data) == 0:
+            raise RuntimeError(f"Brak świec dla {main_symbol} {timeframe} {start_date}..{end_date}")
         
         info = fetcher.get_data_info(data)
         print("\nInformacje o pobranych danych:")
@@ -584,8 +653,8 @@ def main():
         print(f"  Max: {info['main_pair']['price_range']['max']:.4f}")
         print(f"  Średnia: {info['main_pair']['price_range']['avg']:.4f}")
         
-        # Wyświetlanie informacji o BTC tylko dla par innych niż BTC/USDC
-        if data['main_symbol'].iloc[0] != 'BTC/USDC':
+        # Wyświetlanie informacji o BTC tylko gdy fetcher dociągnął osobną serię
+        if 'btc_pair' in info:
             print("\nPara BTC/USDC:")
             print(f"Średni wolumen: {info['btc_pair']['avg_volume']:.2f}")
             print(f"Średnia zmienność: {info['btc_pair']['avg_volatility']:.4f}")

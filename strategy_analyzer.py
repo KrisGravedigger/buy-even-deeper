@@ -32,6 +32,7 @@ import json
 import gc
 import time
 import argparse
+import sys
 from analysis.cache import AnalysisCache
 from tqdm import tqdm
 warnings.filterwarnings('ignore')
@@ -485,8 +486,12 @@ def main():
                             help='Próg min trades dla pre-filtrowania.')
         parser.add_argument('--min-profit-factor', type=float, default=1.0,
                             help='Próg min profit factor dla pre-filtrowania.')
+        parser.add_argument('--no-recommendations', action='store_true',
+                            help='Pomiń interaktywne pytanie o rekomendacje parametrów.')
         # Można dodać argumenty do kontroli klastrowania, np. --cluster-threshold
         args = parser.parse_args()
+        if not sys.stdin.isatty():
+            args.no_recommendations = True
 
         num_processes = args.processes if args.processes and args.processes > 0 else mp.cpu_count()
         logger.info(f"Używana liczba procesów: {num_processes}")
@@ -751,7 +756,7 @@ def main():
 
 
         # --- Opcjonalna analiza rekomendacji ---
-        if processed_files_count > 0:
+        if processed_files_count > 0 and not args.no_recommendations:
              run_recommendation = input("\nCzy chcesz przeanalizować rekomendowane zmiany parametrów? (t/n): ").strip().lower()
              if run_recommendation == 't':
                  logger.info("\n" + " Rozpoczynam Analizę Rekomendacji ".center(80, "-"))
@@ -800,7 +805,10 @@ def main():
                          logger.info("Zakończono analizę rekomendacji.")
                      else: logger.warning("Nie załadowano żadnych danych dystrybucji parametrów.")
              else: logger.info("Pominięto analizę rekomendacji.")
-        else: logger.info("Brak pomyślnie przetworzonych plików, pomijam analizę rekomendacji.")
+        elif args.no_recommendations:
+            logger.info("Pominięto analizę rekomendacji (--no-recommendations).")
+        else:
+            logger.info("Brak pomyślnie przetworzonych plików, pomijam analizę rekomendacji.")
 
     except KeyboardInterrupt:
         logger.warning("\nPrzerwano działanie skryptu przez użytkownika (Ctrl+C).")

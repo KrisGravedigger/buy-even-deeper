@@ -111,8 +111,12 @@ def validate_csv_directory() -> Tuple[bool, Optional[Path]]:
         df = pd.read_csv(csv_file)
         
         # --- POCZĄTEK ZMIANY - Warunkowe sprawdzanie kolumn ---
-        # Sprawdzenie, czy plik to BTC/USDT
-        is_btc_usdt_file = 'BTC_USDT' in csv_file.name 
+        # BTC/USDT i BTC/USDC nie potrzebują osobnej kolumny referencyjnej.
+        name_upper = csv_file.name.upper()
+        is_btc_usdt_file = (
+            'BTC_USDT' in name_upper or 'BTC_USDC' in name_upper
+            or 'BTCUSDT' in name_upper or 'BTCUSDC' in name_upper
+        )
         
         # Ustalenie wymaganych kolumn na podstawie typu pliku
         if is_btc_usdt_file:
