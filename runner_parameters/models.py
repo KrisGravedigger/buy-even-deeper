@@ -79,5 +79,8 @@ class TradingParameters:
             self.stop_loss_no_buy_delay,
             float(self.trailing_buy_enabled),
             self.trailing_buy_threshold,
-            self.trailing_buy_time_in_min
+            self.trailing_buy_time_in_min,
+            # 26: czas blokady zakupów po pumpie (minuty). Wcześniej pole istniało
+            # w konfiguracji, ale run_strategy_core go nie czytało.
+            self.pump_detection_disabled_time
         ], dtype=np.float64)

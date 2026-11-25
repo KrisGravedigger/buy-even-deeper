@@ -16,7 +16,8 @@ def generate_parameter_combinations(param_ranges: Dict,
                                max_combinations: int = None, 
                                resume_from: str = None,
                                mode: str = "backtest",
-                               param_file_name: str = "unknown") -> List[TradingParameters]:
+                               param_file_name: str = "unknown",
+                               exact_grid: bool = False) -> List[TradingParameters]:
     """
     Generuje kombinacje parametrów używając Latin Hypercube Sampling dla lepszego pokrycia przestrzeni.
     
@@ -56,9 +57,14 @@ def generate_parameter_combinations(param_ranges: Dict,
                 enable_info = param_ranges[enable_param]
                 processed_params.add(enable_param)
                 
-                # Specjalna obsługa stop_loss_enabled - zawsze włączony
+                # stop_loss_enabled: szanuj wartość z pliku.
+                # Wymuszenie włączenia zostaje tylko gdy klucza nie ma w konfiguracji
+                # (wtedy ta gałąź i tak się nie wykona) albo gdy brak jawnej wartości.
                 if enable_param == 'stop_loss_enabled':
-                    param_values[enable_param] = [1.0]  # Wymuszamy włączenie
+                    if 'value' in enable_info:
+                        param_values[enable_param] = [float(bool(enable_info.get('value')))]
+                    else:
+                        param_values[enable_param] = [1.0]
                     param_dimensions[enable_param] = 1
                     continue
                 
@@ -82,14 +88,18 @@ def generate_parameter_combinations(param_ranges: Dict,
             if param_name in processed_params:
                 continue
                 
-            # Specjalna obsługa stop_loss_threshold
+            # Specjalna obsługa stop_loss_threshold.
+            # Stała z pliku (value) ma pierwszeństwo. -20% zostaje wyłącznie
+            # jako awaryjny default, gdy w konfiguracji nie ma ani value, ani range.
             if param_name == 'stop_loss_threshold':
                 if 'range' in param_info:
                     min_val, max_val, step = param_info['range']
-                    values = list(np.arange(min_val, max_val + step, step))
-                    param_values[param_name] = values
+                    values = list(np.arange(min_val, max_val + step / 2.0, step))
+                    param_values[param_name] = [float(v) for v in values]
+                elif 'value' in param_info:
+                    param_values[param_name] = [float(param_info['value'])]
                 else:
-                    param_values[param_name] = [-20.0]  # Domyślny stop loss
+                    param_values[param_name] = [-20.0]
                 param_dimensions[param_name] = len(param_values[param_name])
                 continue
                 
@@ -146,9 +156,11 @@ def generate_parameter_combinations(param_ranges: Dict,
         if max_combinations and max_combinations < total_combinations:
             total_combinations = max_combinations
 
-        # Generujemy punkty Latin Hypercube Sampling dla parametrów ciągłych
+        # Generujemy punkty Latin Hypercube Sampling dla parametrów ciągłych.
+        # exact_grid zostawia siatkę min/max/step bez losowego próbkowania
+        # (potrzebne przy małym, powtarzalnym przeszukaniu wokół BtD).
         continuous_param_names = sorted(list(continuous_params))
-        if continuous_param_names:
+        if continuous_param_names and not exact_grid:
             n_samples = min(total_combinations, 1000) if max_combinations else total_combinations
             lhs_samples = _generate_lhs_samples(n_samples, len(continuous_param_names))
             
